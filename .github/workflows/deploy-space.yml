@@ -41,6 +41,7 @@ jobs:
       id-token: write
     env:
       GRADIO_ANALYTICS_ENABLED: 'False'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -64,7 +65,8 @@ jobs:
             export HF_OIDC_RESOURCE=spaces/pengkev/mtg-genrec
           fi
           hf upload pengkev/mtg-genrec build/space . --repo-type space \
-            --delete '*' --commit-message "Deploy GitHub ${GITHUB_SHA}"
+            --delete '*' --exclude '**/__pycache__/*' --exclude '*.pyc' \
+            --commit-message "Deploy GitHub ${GITHUB_SHA}"
       - name: Wait for live Space and exercise recommendations
         run: |
           python scripts/verify_live_space.py --source-commit "$GITHUB_SHA"

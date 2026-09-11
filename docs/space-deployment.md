@@ -112,6 +112,9 @@ This mirrors the complete generated artifact, removing stale deployment files.
 All current pinned assets are included in that upload. Nothing is pushed to
 Hugging Face with Git. This uses the CLI build-step option recommended in
 [Hugging Face's GitHub synchronization documentation](https://huggingface.co/docs/hub/spaces-github-actions).
+The workflow disables Python bytecode writes and excludes `**/__pycache__/*`
+and `*.pyc` from uploads. The smoke test also checks that it leaves the staging
+file set unchanged.
 
 Prefer a [Trusted Publisher](https://huggingface.co/docs/hub/trusted-publishers):
 

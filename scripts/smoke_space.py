@@ -67,13 +67,14 @@ if __name__ == "__main__":
     else:
         if not args.app_dir:
             parser.error("--app-dir or --url is required")
+        original_files = {p.relative_to(args.app_dir) for p in args.app_dir.rglob("*") if p.is_file()}
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
         env = {**os.environ, "GRADIO_SERVER_PORT": str(port), "GRADIO_SERVER_NAME": "127.0.0.1", "GRADIO_ANALYTICS_ENABLED": "False", "MTG_DEVICE": "cpu"}
         with tempfile.TemporaryFile(mode="w+") as log:
-            process = subprocess.Popen([sys.executable, "app.py"], cwd=args.app_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+            process = subprocess.Popen([sys.executable, "-B", "app.py"], cwd=args.app_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 for _ in range(120):
                     if process.poll() is not None:
@@ -97,3 +98,6 @@ if __name__ == "__main__":
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+        resulting_files = {p.relative_to(args.app_dir) for p in args.app_dir.rglob("*") if p.is_file()}
+        if resulting_files != original_files:
+            raise RuntimeError(f"Smoke test changed the deployment file set: {resulting_files ^ original_files}")
