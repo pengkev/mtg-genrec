@@ -1,12 +1,46 @@
-data/
-*.zip
-*.pth
+# Local datasets and metadata; subset manifests live in configs/.
+/data/
+/checkpoints/
+
+# Generated model artifacts.
 *.pt
+*.pth
+*.safetensors
 *.model
-*.model.syn1neg.npy
-*.model.wv.vectors.npy
+*.model.*.npy
+*.npy
+*.npz
+*.joblib
+
+# Secrets and local environments.
 .env
-.venv
-__pycache__
-mtg-minilm-mlm
-old
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Scraper progress, temporary indexes, interrupted writes and logs.
+*.checkpoint.json
+checkpoint_*.txt
+*.sqlite3
+*.sqlite3-*
+*.tmp
+*.part
+*.log
+error.txt
+
+# Python, notebooks and tooling.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local task notes, not application configuration.
+/instruction.txt

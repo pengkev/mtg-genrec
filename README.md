@@ -1,105 +1,111 @@
-# MTG Deck Evaluator
+# GenRec
 
-Streamlit app for scoring EDH decklists with a trained SetTransformer model.
+GenRec learns MTG card representations with Card2Vec and an attention VAE to recommend missing cards for a Commander deck. Recommendations use Oracle card identities and Commander legality filters.
 
-Check it out at https://mtg-deck-evaluator.streamlit.app/
+**scrape → data → train → demo**
 
-## What This Repo Is Now
-
-This project is now focused on inference only:
-
-- Load pre-trained model artifacts
-- Paste commander and main deck cards into the UI
-- Get one output: calibrated score
-
-Legacy research and data collection scripts are still in the repository on the legacy-mess branch, but the main user-facing workflow is the Streamlit app. A quick rundown of the main notebook and training run is also available on the main branch at transformer_final.html.
-
-## Quick Start
-
-### 1) Create and activate a virtual environment
-
-Windows (PowerShell):
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```text
+scrape/
+  scraper.py             Single-writer CLI and discovery scheduler
+  state.py               JSONL output, deduplication and checkpoint recovery
+  http.py                Retries, rate limits and pagination validation
+  metadata.py            Scryfall refresh CLI
+  sources/               Moxfield, MTGTop8 and Deckbox adapters
+configs/commander.json    Training subset input manifest
+scripts/curate_decks.py   Normalize, validate and deduplicate training data
+src/mtgdeck/
+  data.py                Canonical records and dataset preparation
+  metadata.py            Shared Oracle readers and snapshot selection
+  legality.py            Commander validation and candidate filters
+  card2vec.py             Card representation learning
+  vae.py                 GenRec model and training primitives
+  recommend.py           Recommendations, baselines and evaluation
+notebooks/genrec.ipynb    Training, evaluation and model comparisons
+demo/app.py              Streamlit deck-completion demo
+tests/                   Offline tests
+docs/                    AWS migration handoff
+data/                    Local datasets, metadata and scraper state (ignored)
+checkpoints/             Local trained GenRec models (ignored)
 ```
 
-macOS/Linux:
+## Local setup
+
+Use Python 3.11 or newer. The full suite is verified in the existing Python 3.13 environment. Run commands from the repository root.
 
 ```bash
 python -m venv .venv
+# Linux/macOS:
 source .venv/bin/activate
+# Windows PowerShell instead:
+# .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-### 2) Install dependencies
+GPU training needs a PyTorch installation compatible with your CUDA environment. The demo also runs on CPU. Large datasets and trained weights are local assets; installing dependencies does not download them.
+
+## 1. Scrape
+
+Refresh card metadata and explicit commander eligibility:
 
 ```bash
-pip install -r requirements.txt
+python -m scrape.metadata
 ```
 
-### 3) Run the app
+Collect Commander and cEDH decks with the single scraper:
 
 ```bash
-streamlit run streamlit_app.py
+python -m scrape.scraper --sources moxfield mtgtop8 --formats commander cedh
 ```
 
-Open the local URL shown by Streamlit in your terminal.
+Each source runs only its supported formats. Omit the source/format flags to collect all configured constructed formats, including Deckbox. Use `python -m scrape.scraper --help` for page limits, discovery controls, per-source delays and Oracle refresh options. `--mtgtop8-event-metadata` adds tournament placement/player counts by fetching event pages. Moxfield requires `MOXFIELD_USER_AGENT` in the environment or local `.env` (the existing `user-agent` key also works). Keep `.env` private. Use `--sources mtgtop8 deckbox` if that setting is unavailable.
 
-## Using the App
+**Run only one scraper process against a given output directory and checkpoint.** There is no cross-process writer lock. Stop with Ctrl+C to flush partial progress. Rerun the same command to resume; `--fresh` resets search progress and is not the normal resume command. Collection is unbounded unless limits are supplied.
 
-The app has three input boxes:
+Existing storage paths remain unchanged so prior progress resumes:
 
-- Commander Cards
-- Companion (optional)
-- Main Deck Cards
+- `data/format_corpora/<format>.jsonl`: full schema-v1 decklists with quantities and zones.
+- `data/format_corpora/deckbox.jsonl`: Deckbox records, retaining the source's format labels.
+- `data/cooccurence/embedding_corpus.jsonl`: deduplicated, count-free card contexts; a derived representation, not the current notebook's training input.
+- `data/diverse_scraper.checkpoint.json` and `data/format_corpora/.diverse_scraper.seen.sqlite3`: active search progress and seen IDs.
 
-Card-count rules enforced by the UI:
+The spelling and filenames above are intentional compatibility with local state. Source retries, result-window expansion, repeated-page checks, atomic checkpoint replacement, and restartable format corrections remain in the consolidated scraper. Startup still scans existing corpora and loads the search checkpoint; large-state resource limits remain work for the cloud migration.
 
-- Non-partner commander: exactly 1 commander card + 99 main deck cards
-- Partner commanders: exactly 2 commander cards + 98 main deck cards
-- Companion is optional and must be exactly one card (qty 1). It does not change the 100-card requirement, but it is appended into the model input behind the scenes.
-
-Supported line formats:
-
-- `1 Card Name`
-- `1x Card Name`
-- `Card Name` (defaults to quantity 1)
-
-Click Score Deck to run inference. The UI displays only the calibrated score.
-
-## Required Model Files
-
-By default, the app expects these files in the repository root:
-
-- `set_transformer_master_run.pt`
-- `896dim_oracle_embeddings.pt`
-- `set_transformer_master_run_isotonic_calibrator.joblib`
-
-You can override these paths in the sidebar model settings.
-
-## CLI Scoring (Optional)
-
-If you want scoring without the UI:
+## 2. Prepare data
 
 ```bash
-python score_decklist.py --decklist-file path/to/deck.txt --json
+python scripts/curate_decks.py --manifest configs/commander.json
 ```
 
-You can also pipe deck text via stdin.
+The manifest selects Commander/cEDH records from existing `data/decks.jsonl` and current scraper outputs. Paths are relative to the manifest. Explicitly optional missing inputs are reported; preparation fails if none exist. Edit or add a manifest to choose a different subset without copying raw files. A single older harvest can instead be supplied with `--input path/to/harvest.jsonl`.
 
-## Project Layout (Current Focus)
+Preparation streams input records, adapts older Moxfield/MTGTop8 schemas, checks Commander legality, resolves Oracle IDs and removes duplicate accepted decks. It produces `data/decks_clean.jsonl`, a rejection manifest and an audit report. These are derived outputs that preparation replaces; raw inputs are never rewritten. Keep the scraper stopped while preparing a consistent dataset snapshot. Run training after preparation finishes.
 
-- `streamlit_app.py`: Streamlit UI for deck scoring
-- `score_decklist.py`: SetTransformer inference pipeline and parser
-- `requirements.txt`: Python dependencies
+Schema v1 retains source identity, URL, date, format, mainboard, sideboard, commanders, optional companions and source metadata. Card entries retain display names and quantities; preparation can attach Oracle IDs. Companion legality is not inferred. Training converts cards to `oid:` tokens without replacing the stored display names.
 
-## Data and Credit
+Preparation and the demo prefer the updater's `data/oracle_cards.jsonl.gz`, falling back to the newest dated snapshot or `oracle_cards.json`. The notebook uses the same selector; its configuration can pin a specific snapshot for reproducible experiments.
 
-Deck data for this work came from Moxfield and MTGTop8.
+## 3. Train
 
-Huge shoutout to Moxfield for providing deck data access that made this project possible.
+```bash
+jupyter notebook notebooks/genrec.ipynb
+```
 
-## Author
+Run the notebook from the first cell. It requires the prepared `data/decks_clean.jsonl` and Oracle metadata. The configuration cell controls data paths, seed, device, model size and ablations. It trains/loads Card2Vec, creates grouped train/validation/test splits, trains GenRec and compares recommendations using matched held-out cards. Manual EDHREC comparisons remain in the final section.
 
-Kevin Peng
+The default 896-dimensional Oracle-ID models use `data/card2vec_clean_oracleid_v2_896.model` and its NumPy sidecars, plus `checkpoints/attention_oracleid_v2_*.pt`. Keep sidecars with their Card2Vec model. The notebook retains its current algorithms; it loads datasets into memory and is not yet a resumable batch-training CLI.
+
+## 4. Demo
+
+```bash
+python -m streamlit run demo/app.py
+```
+
+Select an available GenRec checkpoint, enter a Commander and partial deck, and request recommendations. The demo loads the checkpoint, Oracle metadata and commander eligibility. It does not require the training corpus or separate Card2Vec files. A fresh checkout needs trained checkpoints copied into `checkpoints/` or produced by the notebook.
+
+## Tests and migration
+
+```bash
+python -m pytest -q
+```
+
+Tests use fixtures and temporary directories; they do not scrape live sites or train on local corpora. See [the AWS migration handoff](docs/aws-migration-audit.md) for current resource findings and remaining work. No AWS infrastructure is included.

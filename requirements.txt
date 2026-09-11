@@ -1,4 +1,19 @@
-streamlit
+# GenRec training, evaluation and inference
 torch
 numpy
-scikit-learn
+pandas
+gensim
+scipy
+matplotlib
+joblib
+
+# Scraping and metadata
+requests
+beautifulsoup4
+cloudscraper
+python-dotenv
+
+# Notebook, demo and tests
+jupyter
+streamlit
+pytest

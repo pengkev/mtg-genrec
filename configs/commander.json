@@ -1,0 +1,24 @@
+{
+  "formats": [
+    "commander",
+    "cedh"
+  ],
+  "inputs": [
+    {
+      "path": "../data/decks.jsonl",
+      "optional": true
+    },
+    {
+      "path": "../data/format_corpora/commander.jsonl",
+      "optional": true
+    },
+    {
+      "path": "../data/format_corpora/cedh.jsonl",
+      "optional": true
+    },
+    {
+      "path": "../data/format_corpora/deckbox.jsonl",
+      "optional": true
+    }
+  ]
+}
