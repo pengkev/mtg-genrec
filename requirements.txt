@@ -15,5 +15,5 @@ python-dotenv
 
 # Notebook, demo and tests
 jupyter
-streamlit
+-r demo/space/requirements.txt
 pytest

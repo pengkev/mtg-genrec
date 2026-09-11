@@ -1,0 +1,4 @@
+gradio==6.27.0
+spaces==0.51.3
+torch==2.11.0
+numpy==2.5.3

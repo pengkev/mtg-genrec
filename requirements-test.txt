@@ -1,0 +1,10 @@
+# CI tests; not deployed to the Space.
+-r demo/space/requirements.txt
+pytest==9.1.1
+gensim==4.4.0
+scipy==1.18.1
+joblib==1.6.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+cloudscraper==1.2.71
+python-dotenv==1.2.3

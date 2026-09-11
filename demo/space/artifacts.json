@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "repo_id": "pengkev/mtg-genrec",
+  "repo_type": "space",
+  "revision": "181064722d1982a76f9ca6f28b3ca54a3e8ea5aa",
+  "checkpoints": [
+    {
+      "name": "attention_oracleid_v2_variational_finetuned_896.pt",
+      "path": "artifacts/34130ca78dacb9f32fec60530f7081b931236c5ad62c4b5e4ac5e8eeab08811a.pt",
+      "sha256": "34130ca78dacb9f32fec60530f7081b931236c5ad62c4b5e4ac5e8eeab08811a",
+      "size": 117201088
+    },
+    {
+      "name": "attention_oracleid_v2_variational_frozen_896.pt",
+      "path": "artifacts/019f9886faa3538aa8b48dc85164b5a87b1e5bcd211b3db3f2f6ef147cda31d3.pt",
+      "sha256": "019f9886faa3538aa8b48dc85164b5a87b1e5bcd211b3db3f2f6ef147cda31d3",
+      "size": 117201088
+    },
+    {
+      "name": "attention_oracleid_v2_deterministic_frozen_896.pt",
+      "path": "artifacts/0ed6b9fc2d886024248b840eb141bf563a4d1d804caed1bfef435e91af0b673c.pt",
+      "sha256": "0ed6b9fc2d886024248b840eb141bf563a4d1d804caed1bfef435e91af0b673c",
+      "size": 117201088
+    }
+  ],
+  "oracle": {
+    "name": "oracle_cards.jsonl.gz",
+    "path": "artifacts/e11fe42f492eb6ad5e6a962853d2f8e841b807f9fbb449e0b13a9b39618e5063.jsonl.gz",
+    "sha256": "e11fe42f492eb6ad5e6a962853d2f8e841b807f9fbb449e0b13a9b39618e5063",
+    "size": 5272544
+  },
+  "eligibility": {
+    "name": "commander_eligible_oracle_ids.json",
+    "path": "artifacts/4e1e7ee0e6620e2eef0f3ef7ce5e6916f2b0f12b91d57a6da3ba2ef82e0a9b24.json",
+    "sha256": "4e1e7ee0e6620e2eef0f3ef7ce5e6916f2b0f12b91d57a6da3ba2ef82e0a9b24",
+    "size": 165752
+  }
+}

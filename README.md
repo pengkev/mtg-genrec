@@ -20,8 +20,10 @@ src/mtgdeck/
   card2vec.py             Card representation learning
   vae.py                 GenRec model and training primitives
   recommend.py           Recommendations, baselines and evaluation
+  inference.py           Shared demo parsing, checkpoint loading and scoring
 notebooks/genrec.ipynb    Training, evaluation and model comparisons
-demo/app.py              Streamlit deck-completion demo
+demo/app.py              Gradio deck-completion demo
+demo/space/              Space metadata, inference requirements and asset pins
 tests/                   Offline tests
 docs/                    AWS migration handoff
 data/                    Local datasets, metadata and scraper state (ignored)
@@ -97,10 +99,22 @@ The default 896-dimensional Oracle-ID models use `data/card2vec_clean_oracleid_v
 ## 4. Demo
 
 ```bash
-python -m streamlit run demo/app.py
+python demo/app.py
 ```
 
 Select an available GenRec checkpoint, enter a Commander and partial deck, and request recommendations. The demo loads the checkpoint, Oracle metadata and commander eligibility. It does not require the training corpus or separate Card2Vec files. A fresh checkout needs trained checkpoints copied into `checkpoints/` or produced by the notebook.
+
+The Gradio demo preserves checkpoint selection, Commander/partner inputs, deck
+text parsing, legality and color-identity filters, seeded latent sampling,
+score tables, resolved-card warnings and CSV download. CPU inference is the
+default after benchmarking; set `MTG_DEVICE=cuda` for a local GPU or
+`MTG_DEVICE=zerogpu` on ZeroGPU hardware. Models load once at startup.
+
+Hosted demo: [pengkev/mtg-genrec](https://huggingface.co/spaces/pengkev/mtg-genrec).
+GitHub `main` is the source of truth. GitHub Actions tests the repository, builds
+an allowlisted inference artifact and uploads it to the Space. See
+[Space deployment](docs/space-deployment.md) for asset bootstrapping, keyless
+Trusted Publisher setup, manual redeployment and verification.
 
 ## Tests and migration
 

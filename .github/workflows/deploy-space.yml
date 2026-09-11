@@ -1,0 +1,70 @@
+name: Test and deploy Gradio Space
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: space-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install test dependencies
+        run: |
+          python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements-test.txt
+      - run: python -m pytest -q
+      - run: git diff --check
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GRADIO_ANALYTICS_ENABLED: 'False'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install inference and deployment tools
+        run: |
+          python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r demo/space/requirements.txt huggingface_hub==1.31.0
+      - name: Build allowlisted artifact from pinned Hub assets
+        run: python scripts/build_space.py --output build/space
+      - name: Real inference and API smoke test
+        run: python scripts/smoke_space.py --app-dir build/space
+      - name: Sync generated artifact to Hugging Face
+        env:
+          # Optional fallback. Leave unset when using a Trusted Publisher.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            export HF_OIDC_RESOURCE=spaces/pengkev/mtg-genrec
+          fi
+          hf upload pengkev/mtg-genrec build/space . --repo-type space \
+            --delete '*' --commit-message "Deploy GitHub ${GITHUB_SHA}"
+      - name: Wait for live Space and exercise recommendations
+        run: |
+          python scripts/verify_live_space.py --source-commit "$GITHUB_SHA"
