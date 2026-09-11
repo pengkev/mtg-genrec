@@ -1,6 +1,6 @@
-# GenRec
+# MTG GenRec
 
-GenRec learns MTG card representations with Card2Vec and an attention VAE to recommend missing cards for a Commander deck. Recommendations use Oracle card identities and Commander legality filters.
+MTG GenRec learns MTG card representations with Card2Vec and an attention VAE to recommend missing cards for a Commander deck. Recommendations use Oracle card identities and Commander legality filters.
 
 **scrape → data → train → demo**
 
