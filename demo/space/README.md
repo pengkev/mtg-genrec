@@ -22,8 +22,11 @@ This Space is a generated deployment artifact. Edit code and configuration in
 GitHub; do not edit the Space independently. `source.json` records the source
 commit and `artifacts.json` pins the inference assets by SHA-256.
 
-CPU is the default: local two-thread inference measured 18–31 ms for a normal
-request and about 275 ms for 16 latent draws. This avoids a GPU allocation for
-an already interactive workload. The app also supports `MTG_DEVICE=zerogpu`
-on ZeroGPU hardware, with models placed on CUDA at startup and only scoring
-decorated with `spaces.GPU(duration=5)`.
+The hosted app detects ZeroGPU hardware, places models on CUDA at startup and
+decorates only scoring with `spaces.GPU(duration=5)`. No placeholder GPU work
+or per-request model loading is used.
+
+Local runs default to CPU: two-thread inference measured 18–31 ms normally and
+about 275 ms for 16 latent draws. CPU is fast enough, but this Space's ZeroGPU
+hardware requires a GPU function and the account could not switch it to free
+CPU hardware. The existing ZeroGPU hardware therefore serves actual inference.

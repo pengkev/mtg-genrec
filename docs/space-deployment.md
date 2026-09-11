@@ -19,8 +19,8 @@ Requests are serialized to preserve the original global PyTorch sampling seed.
 Invalid requests clear stale output and downloads. CSV files expire from the
 Gradio cache after an hour.
 
-CPU is the default even when the Space has ZeroGPU hardware selected. On the
-local machine with two CPU threads, normal requests took 18–31 ms and the default
+CPU is the local default. On the local machine with two CPU threads, normal
+requests took 18–31 ms and the default
 deck with 16 draws took about 275 ms. A 100-card input with 16 draws took
 0.63–0.68 seconds in Linux. CUDA normal requests took 5–7 ms and 16 draws about
 60 ms. CPU is already interactive and avoids GPU allocation/quota overhead.
@@ -28,7 +28,13 @@ Hardware differs on the Space; these are local measurements, not live latency
 guarantees. Sampling parity is evaluated on the same device; PyTorch CPU and
 CUDA random streams are not interchangeable.
 
-`MTG_DEVICE=zerogpu` enables optional ZeroGPU inference. `spaces` is imported
+The target Space uses ZeroGPU. CPU performance is sufficient, but ZeroGPU
+refused startup without a GPU function, and the hardware API refused a switch
+to free `cpu-basic` without PRO. No paid hardware or subscription was enabled.
+The app detects `SPACES_ZERO_GPU=true` and selects `zerogpu` automatically;
+explicit CPU mode on ZeroGPU hardware is rejected with a clear setup error.
+
+`MTG_DEVICE=zerogpu` can also explicitly enable ZeroGPU inference. `spaces` is imported
 before models are constructed; all three models are loaded and placed on CUDA
 at module scope. Only the scoring function has `@spaces.GPU(duration=5)`. Five
 seconds provides headroom over the measured inference times; benchmark on the
@@ -141,7 +147,7 @@ python scripts/smoke_space.py --app-dir build/reproduction
 
 ## Migration verification
 
-All 101 original tests plus 13 adapter/build/export tests passed (114 total). A separate
+All 101 original tests plus 19 adapter/build/export tests passed (120 total). A separate
 migration parity check compared the original Streamlit functions and exported
 Gradio inference on CPU: all 12 checkpoint/sampling cases matched exactly,
 including ordered card names and rounded scores. Every model tensor and

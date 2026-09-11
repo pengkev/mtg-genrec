@@ -16,7 +16,7 @@ ROOT = APP_DIR.parent
 sys.path.insert(0, str(APP_DIR if (APP_DIR / "mtgdeck").exists() else ROOT / "src"))
 sys.path.insert(0, str(APP_DIR))
 
-from adapter import generate
+from adapter import generate, resolve_device_mode
 from mtgdeck.artifacts import load_manifest, verify_assets
 from mtgdeck.inference import (
     DEFAULT_COMMANDER, DEFAULT_DECK, RECOMMENDATION_COLUMNS, VISIBLE_COLUMNS,
@@ -27,9 +27,7 @@ from mtgdeck.metadata import default_oracle_path
 
 
 # Device choice is server configuration: models are never reloaded per request.
-DEVICE_MODE = os.environ.get("MTG_DEVICE", "cpu")
-if DEVICE_MODE not in {"cpu", "cuda", "zerogpu"}:
-    raise ValueError("MTG_DEVICE must be cpu, cuda, or zerogpu")
+DEVICE_MODE = resolve_device_mode(os.environ)
 DEVICE = "cpu" if DEVICE_MODE == "cpu" else "cuda"
 torch.set_num_threads(int(os.environ.get("MTG_CPU_THREADS", "2")))
 

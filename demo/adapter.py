@@ -9,6 +9,17 @@ from typing import Callable, Mapping, Any
 from mtgdeck.inference import RECOMMENDATION_COLUMNS, prepare_request
 
 
+def resolve_device_mode(environment: Mapping[str, str]) -> str:
+    """Match serving mode to the host without requesting a GPU locally."""
+    zero_gpu = environment.get("SPACES_ZERO_GPU", "").lower() in {"1", "t", "true"}
+    mode = environment.get("MTG_DEVICE", "zerogpu" if zero_gpu else "cpu")
+    if mode not in {"cpu", "cuda", "zerogpu"}:
+        raise ValueError("MTG_DEVICE must be cpu, cuda, or zerogpu")
+    if zero_gpu and mode != "zerogpu":
+        raise ValueError("ZeroGPU hardware requires MTG_DEVICE=zerogpu. CPU mode requires CPU hardware.")
+    return mode
+
+
 def generate(
     bundles: Mapping[str, Any], score: Callable, checkpoint: str,
     commander: str, deck: str, count: int, sample: bool, draws: int, seed: int,

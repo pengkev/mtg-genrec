@@ -107,8 +107,9 @@ Select an available GenRec checkpoint, enter a Commander and partial deck, and r
 The Gradio demo preserves checkpoint selection, Commander/partner inputs, deck
 text parsing, legality and color-identity filters, seeded latent sampling,
 score tables, resolved-card warnings and CSV download. CPU inference is the
-default after benchmarking; set `MTG_DEVICE=cuda` for a local GPU or
-`MTG_DEVICE=zerogpu` on ZeroGPU hardware. Models load once at startup.
+local default after benchmarking; set `MTG_DEVICE=cuda` for a local GPU.
+The hosted Space automatically uses ZeroGPU on its existing hardware. Models
+load once at startup, and only scoring reserves a GPU for up to five seconds.
 
 Hosted demo: [pengkev/mtg-genrec](https://huggingface.co/spaces/pengkev/mtg-genrec).
 GitHub `main` is the source of truth. GitHub Actions tests the repository, builds

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from demo.adapter import generate
+from demo.adapter import generate, resolve_device_mode
 from mtgdeck.data import PAD_TOKEN, UNK_TOKEN
 from mtgdeck.inference import prepare_request, recommend, resolve_partial_deck
 from mtgdeck.legality import CommanderCandidateIndex, OracleCatalog
@@ -85,3 +85,18 @@ def test_partner_pair_and_sampling_are_preserved(bundle):
 def test_public_api_validates_slider_limits(bundle, kwargs):
     with pytest.raises(ValueError):
         prepare_request(bundle, "Leader", "Present", **kwargs)
+
+
+@pytest.mark.parametrize("environment,expected", [
+    ({}, "cpu"), ({"MTG_DEVICE": "cuda"}, "cuda"),
+    ({"SPACES_ZERO_GPU": "true"}, "zerogpu"),
+    ({"SPACES_ZERO_GPU": "1"}, "zerogpu"),
+])
+def test_device_mode_matches_host(environment, expected):
+    assert resolve_device_mode(environment) == expected
+
+
+@pytest.mark.parametrize("environment", [{"MTG_DEVICE": "invalid"}, {"SPACES_ZERO_GPU": "true", "MTG_DEVICE": "cpu"}])
+def test_device_mode_rejects_incompatible_configuration(environment):
+    with pytest.raises(ValueError):
+        resolve_device_mode(environment)
