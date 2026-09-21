@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo_id": "pengkev/mtg-genrec",
   "repo_type": "space",
-  "revision": "181064722d1982a76f9ca6f28b3ca54a3e8ea5aa",
+  "revision": "c7c1acd6cf0f36454c06c869ec8e490b75b8b1f3",
   "checkpoints": [
     {
       "name": "attention_oracleid_v2_variational_finetuned_896.pt",
@@ -25,9 +25,9 @@
   ],
   "oracle": {
     "name": "oracle_cards.jsonl.gz",
-    "path": "artifacts/e11fe42f492eb6ad5e6a962853d2f8e841b807f9fbb449e0b13a9b39618e5063.jsonl.gz",
-    "sha256": "e11fe42f492eb6ad5e6a962853d2f8e841b807f9fbb449e0b13a9b39618e5063",
-    "size": 5272544
+    "path": "artifacts/f507cabcacafe83c601031949fccb0c0fc73bbee0bffced58b673dd30f2b4f63.jsonl.gz",
+    "sha256": "f507cabcacafe83c601031949fccb0c0fc73bbee0bffced58b673dd30f2b4f63",
+    "size": 9178040
   },
   "eligibility": {
     "name": "commander_eligible_oracle_ids.json",

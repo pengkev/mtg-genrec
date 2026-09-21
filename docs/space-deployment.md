@@ -27,12 +27,12 @@ the collapsed **Advanced / model settings** accordion. The text-based
 `/recommend` API retains its seven inputs and four outputs.
 
 Gallery images come from snapshot `image_uris` or `card_faces`, with a selectable
-placeholder when art is missing; no Scryfall API lookup is performed. The current
-pinned Oracle artifact predates top-level image retention, so most single-faced
-cards show placeholders on that artifact. The exporter now retains `image_uris`.
-To enable their art on the Space, use the existing asset publication procedure
-below and commit the refreshed manifest. This UI change does not repin or publish
-assets. Gradio 6.27's fixed gallery column count is adapted with a small CSS grid
+placeholder when art is missing; no Scryfall API lookup is performed. The pinned
+Oracle artifact includes top-level image metadata for all single-faced cards.
+Its image restoration preserved every original record and all inference and
+legality fields; future exports also retain `image_uris`. Refresh art using the
+existing asset publication procedure below and commit the refreshed manifest.
+Gradio 6.27's fixed gallery column count is adapted with a small CSS grid
 rule for responsive wrapping; selection displays details below the gallery.
 
 CPU is the local default. On the local machine with two CPU threads, normal
