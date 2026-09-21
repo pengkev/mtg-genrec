@@ -201,8 +201,19 @@ def test_gradio_app_serializes_recommend_and_add_and_preserves_api(bundle, monke
     event = gr.SelectData(None, {'index': 0, 'value': None})
     selected, detail, button = functions['select_card'].fn(records, event)
     assert selected == records[0] and button.interactive
-    updated, *next_output = functions['add_request'].fn(selected, 'fixture.pt', ['Leader'], 'Present', 25, False, 1, 42)
+    # Adding must neither score nor replace the current gallery/selection/CSV.
+    def unexpected_scoring(*args, **kwargs):
+        pytest.fail('Add to deck must not run inference')
+
+    with monkeypatch.context() as guard:
+        guard.setitem(functions['add_request'].fn.__globals__, 'SCORE', unexpected_scoring)
+        updated, status = functions['add_request'].fn(selected, 'Present')
+        duplicate, duplicate_status = functions['add_request'].fn(selected, updated)
+    assert functions['add_request'].outputs == [functions['visual_request'].inputs[2], functions['visual_request'].outputs[2]]
     assert f"1 {selected['Card']}" in updated
+    assert 'Click Recommend' in status
+    assert duplicate == updated and 'already' in duplicate_status
+    next_output = functions['visual_request'].fn('fixture.pt', ['Leader'], updated, 25, False, 1, 42)
     assert selected['Card'] not in [row['Card'] for row in next_output[4]]
     assert next_output[6] is None
     invalid = functions['visual_request'].fn('fixture.pt', [], 'Present', 25, False, 1, 42)

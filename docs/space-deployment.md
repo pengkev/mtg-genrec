@@ -21,8 +21,9 @@ Gradio cache after an hour.
 
 The player UI searches the local catalog for up to two commanders, shows ranked
 card art, and lets players select a recommendation and add it to the pasted
-mainboard. Adding skips already represented Oracle identities and reruns scoring
-through the same serialized queue. Model controls, tables and CSV export live in
+mainboard. Adding skips already represented Oracle identities and keeps the current
+recommendations available for further selections. Click **Recommend** to score the
+updated deck through the serialized queue. Model controls, tables and CSV export live in
 the collapsed **Advanced / model settings** accordion. The text-based
 `/recommend` API retains its seven inputs and four outputs.
 

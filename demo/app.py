@@ -165,18 +165,16 @@ def create_demo():
             card, detail = select_recommendation(records, event.index if event.selected else None)
             return card, detail, gr.Button(interactive=card is not None)
 
-        def add_request(card, checkpoint, commanders, deck, count, sample, draws, seed):
+        def add_request(card, deck):
             updated, message = add_to_deck(deck, card, CATALOG)
-            output = list(visual_request(checkpoint, commanders, updated, count, sample, draws, seed))
-            output[2] = message + "\n" + output[2]
-            return updated, *output
+            return updated, message + "\nClick Recommend when you're ready to refresh recommendations."
 
         inputs = [checkpoint, commander, deck, count, sample, draws, seed]
         outputs = [results, visible, status, download, recommendations, gallery, selected, selected_details, add]
         # Both entry points and selection share a queue, protecting sampling and state.
         submit.click(visual_request, inputs, outputs, api_visibility="private", concurrency_limit=1, concurrency_id="inference")
         gallery.select(select_card, recommendations, [selected, selected_details, add], api_visibility="private", concurrency_limit=1, concurrency_id="inference")
-        add.click(add_request, [selected, *inputs], [deck, *outputs], api_visibility="private", concurrency_limit=1, concurrency_id="inference")
+        add.click(add_request, [selected, deck], [deck, status], api_visibility="private", concurrency_limit=1, concurrency_id="inference")
     return app.queue(max_size=32, default_concurrency_limit=1)
 
 
