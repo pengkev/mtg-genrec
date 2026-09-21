@@ -26,7 +26,7 @@ MODEL_CONFIG_KEYS = {
 # preference and commander-pair rules. Preserve every card, its order and faces.
 ORACLE_FIELDS = {
     "name", "oracle_id", "color_identity", "type_line", "oracle_text", "legalities",
-    "games", "layout", "lang", "released_at", "card_faces",
+    "games", "layout", "lang", "released_at", "card_faces", "image_uris",
 }
 
 

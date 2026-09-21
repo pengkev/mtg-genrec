@@ -3,10 +3,81 @@
 from __future__ import annotations
 
 import csv
+import html
 import tempfile
 from typing import Callable, Mapping, Any
 
-from mtgdeck.inference import RECOMMENDATION_COLUMNS, prepare_request
+from mtgdeck.inference import (
+    COMMANDER_SECTIONS, IGNORED_SECTIONS, MAINBOARD_SECTIONS,
+    RECOMMENDATION_COLUMNS, SET_SUFFIX, parse_deck_text, prepare_request,
+)
+from mtgdeck.legality import OracleCatalog
+
+
+def card_image(card: Mapping[str, Any] | None) -> str | None:
+    """Use the shipped image metadata, never a live card lookup."""
+    card = card or {}
+    sources = [card, *(card.get("card_faces") or [])]
+    for source in sources:
+        images = source.get("image_uris") or {}
+        for size in ("normal", "large", "small", "png"):
+            if images.get(size):
+                return images[size]
+    return None
+
+
+def recommendation_gallery(rows, catalog: OracleCatalog):
+    """Keep every rank selectable, even when the snapshot lacks its image."""
+    import numpy as np
+
+    records = [dict(zip(RECOMMENDATION_COLUMNS, row)) for row in rows]
+    gallery = []
+    for row in records:
+        uri = card_image(catalog.resolve(row["Card"]))
+        caption = f"#{row['Rank']} · {row['Card']}"
+        # A neutral card-shaped placeholder requires no asset or network call.
+        gallery.append((uri if uri else np.full((336, 240, 3), 48, dtype=np.uint8),
+                        caption if uri else caption + " · Art unavailable"))
+    return records, gallery
+
+
+def select_recommendation(records, index):
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(records):
+        return None, "Select a card to inspect it."
+    card = dict(records[index])
+    # HTML escaping keeps card names and Oracle type lines literal.
+    detail = "<br>".join(
+        f"<strong>{label}:</strong> {html.escape(str(card[key]))}"
+        for label, key in (("Card", "Card"), ("Rank", "Rank"), ("Model score", "Score"),
+                           ("Color identity", "Color identity"), ("Type", "Type"))
+    )
+    return card, detail
+
+
+def add_to_deck(deck: str, selected, catalog: OracleCatalog) -> tuple[str, str]:
+    """Append one mainboard card; preserve text and avoid duplicate identities."""
+    if not selected:
+        return deck, "Select a recommendation first."
+    card = catalog.resolve(selected["Card"])
+    if card is None:
+        return deck, "The selected card is missing from the Oracle catalog."
+    parsed = parse_deck_text(deck)
+    for zone in parsed.values():
+        for name in zone:
+            existing = catalog.resolve(name) or catalog.resolve(SET_SUFFIX.sub("", name).strip())
+            if existing and existing["oracle_id"] == card["oracle_id"]:
+                return deck, f"{card['name']} is already in the deck text; no copy added."
+    # A trailing sideboard/commander section must not swallow the new card.
+    zone = "mainboard"
+    for line in deck.splitlines():
+        heading = line.strip().casefold()
+        if heading in MAINBOARD_SECTIONS:
+            zone = "mainboard"
+        elif heading in COMMANDER_SECTIONS or heading in IGNORED_SECTIONS:
+            zone = "other"
+    separator = "" if not deck or deck.endswith("\n") else "\n"
+    prefix = "Deck\n" if zone != "mainboard" else ""
+    return deck + separator + prefix + f"1 {card['name']}", f"Added {card['name']}."
 
 
 def resolve_device_mode(environment: Mapping[str, str]) -> str:

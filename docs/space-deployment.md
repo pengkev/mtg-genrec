@@ -19,6 +19,22 @@ Requests are serialized to preserve the original global PyTorch sampling seed.
 Invalid requests clear stale output and downloads. CSV files expire from the
 Gradio cache after an hour.
 
+The player UI searches the local catalog for up to two commanders, shows ranked
+card art, and lets players select a recommendation and add it to the pasted
+mainboard. Adding skips already represented Oracle identities and reruns scoring
+through the same serialized queue. Model controls, tables and CSV export live in
+the collapsed **Advanced / model settings** accordion. The text-based
+`/recommend` API retains its seven inputs and four outputs.
+
+Gallery images come from snapshot `image_uris` or `card_faces`, with a selectable
+placeholder when art is missing; no Scryfall API lookup is performed. The current
+pinned Oracle artifact predates top-level image retention, so most single-faced
+cards show placeholders on that artifact. The exporter now retains `image_uris`.
+To enable their art on the Space, use the existing asset publication procedure
+below and commit the refreshed manifest. This UI change does not repin or publish
+assets. Gradio 6.27's fixed gallery column count is adapted with a small CSS grid
+rule for responsive wrapping; selection displays details below the gallery.
+
 CPU is the local default. On the local machine with two CPU threads, normal
 requests took 18–31 ms and the default
 deck with 16 draws took about 275 ms. A 100-card input with 16 draws took

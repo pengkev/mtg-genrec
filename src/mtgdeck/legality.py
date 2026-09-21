@@ -236,6 +236,20 @@ class OracleCatalog:
     def __len__(self) -> int:
         return len(self._by_oracle_id)
 
+    def commander_choices(self) -> list[str]:
+        """Sorted snapshot-legal command-zone choices, including backgrounds.
+
+        Choices are candidates only; the selected combination still requires
+        the normal command-zone validation at inference time.
+        """
+        return sorted({
+            str(card["name"]) for card in self._by_oracle_id.values()
+            if card.get("legalities", {}).get("commander") == "legal"
+            and (self.can_be_sole_commander(card) or _is_background(card)
+                 or _chooses_background(card) or _is_doctors_companion(card)
+                 or _is_doctor(card))
+        }, key=oracle_name_key)
+
     def resolve(self, name: str, oracle_id: str | None = None) -> Mapping[str, Any] | None:
         if oracle_id and str(oracle_id) in self._by_oracle_id:
             return self._by_oracle_id[str(oracle_id)]

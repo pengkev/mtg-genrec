@@ -100,3 +100,111 @@ def test_device_mode_matches_host(environment, expected):
 def test_device_mode_rejects_incompatible_configuration(environment):
     with pytest.raises(ValueError):
         resolve_device_mode(environment)
+
+
+def test_commander_choices_include_backgrounds_and_exclude_banned(bundle):
+    cards = [dict(bundle['catalog'].resolve(name)) for name in ('Leader', 'Partner', 'Present')]
+    cards += [dict(cards[0], name='Banned leader', oracle_id='banned', legalities={'commander': 'banned'}),
+              dict(cards[2], name='A Background', oracle_id='background', type_line='Legendary Enchantment — Background')]
+    catalog = OracleCatalog(cards, commander_eligible_oracle_ids=['leader'])
+    assert catalog.commander_choices() == ['A Background', 'Leader']
+    choices = catalog.commander_choices()
+    choices.clear()
+    assert catalog.commander_choices() == ['A Background', 'Leader']
+
+
+def test_card_image_uses_normal_faces_and_missing_fallback():
+    from demo.adapter import card_image
+    assert card_image({'image_uris': {'normal': 'normal.jpg', 'small': 'small.jpg'}}) == 'normal.jpg'
+    assert card_image({'card_faces': [{'image_uris': {'normal': 'front.jpg'}},
+                                       {'image_uris': {'normal': 'back.jpg'}}]}) == 'front.jpg'
+    assert card_image({'image_uris': {'small': 'small.jpg'}}) == 'small.jpg'
+    assert card_image({}) is None
+    assert card_image(None) is None
+
+
+def test_gallery_and_selection_preserve_rank_and_details(bundle):
+    from demo.adapter import recommendation_gallery, select_recommendation
+    bundle['catalog'].resolve('Allowed')['image_uris'] = {'normal': 'allowed.jpg'}
+    rows = [[1, 'Allowed', 0.4, 'U', 'Artifact'], [2, 'Present', -0.2, 'Colorless', 'Artifact']]
+    records, gallery = recommendation_gallery(rows, bundle['catalog'])
+    assert gallery[0] == ('allowed.jpg', '#1 · Allowed')
+    assert gallery[1][0].shape == (336, 240, 3)
+    assert gallery[1][1] == '#2 · Present · Art unavailable'
+    selected, details = select_recommendation(records, 1)
+    assert selected['Card'] == 'Present'
+    for value in ('Present', '-0.2', 'Colorless', 'Artifact', 'Rank'):
+        assert value in details
+    for index in (-1, 2, None, True, (0, 1)):
+        assert select_recommendation(records, index)[0] is None
+    assert recommendation_gallery([], bundle['catalog']) == ([], [])
+
+
+@pytest.mark.parametrize('text', ['Allowed', '2x Allowed', '1 Allowed (SET) 12', 'aLLoWeD', 'Commander\nAllowed'])
+def test_add_does_not_duplicate_resolved_card(bundle, text):
+    from demo.adapter import add_to_deck
+    updated, message = add_to_deck(text, {'Card': 'Allowed'}, bundle['catalog'])
+    assert updated == text
+    assert 'already' in message
+
+
+@pytest.mark.parametrize('text', ['', 'Present', 'Deck\nPresent\nSideboard\nRed', 'Commander\nLeader'])
+def test_add_appends_in_mainboard_and_is_idempotent(bundle, text):
+    from demo.adapter import add_to_deck
+    from mtgdeck.inference import parse_deck_text
+    selected = {'Card': 'Allowed'}
+    updated, _ = add_to_deck(text, selected, bundle['catalog'])
+    assert updated.startswith(text)
+    assert parse_deck_text(updated)['mainboard']['Allowed'] == 1
+    assert add_to_deck(updated, selected, bundle['catalog'])[0] == updated
+    assert add_to_deck(text, None, bundle['catalog'])[0] == text
+
+
+def test_add_recognizes_face_alias():
+    from demo.adapter import add_to_deck
+    catalog = OracleCatalog([{'name': 'Front // Back', 'oracle_id': 'dfc',
+                             'card_faces': [{'name': 'Front'}, {'name': 'Back'}]}])
+    assert add_to_deck('1 Front (SET) 123', {'Card': 'Front // Back'}, catalog)[0] == '1 Front (SET) 123'
+
+
+def test_asset_export_preserves_card_art():
+    from scripts.export_space_assets import ORACLE_FIELDS
+    assert {'image_uris', 'card_faces'} <= ORACLE_FIELDS
+
+
+def test_gradio_app_serializes_recommend_and_add_and_preserves_api(bundle, monkeypatch):
+    import runpy
+    import gradio as gr
+    import mtgdeck.inference as inference
+    from mtgdeck.legality import OracleCatalog
+
+    bundle['checkpoint'] = {}
+    monkeypatch.setattr(inference, 'available_checkpoints', lambda _: [Path('fixture.pt')])
+    monkeypatch.setattr(inference, 'load_bundle', lambda *args, **kwargs: bundle)
+    monkeypatch.setattr(inference, 'DEFAULT_COMMANDER', 'Leader')
+    monkeypatch.setattr(OracleCatalog, 'from_path', lambda *args: bundle['catalog'])
+    monkeypatch.setenv('MTG_DEVICE', 'cpu')
+    monkeypatch.delenv('SPACES_ZERO_GPU', raising=False)
+    namespace = runpy.run_path(str(Path(__file__).parents[1] / 'demo' / 'app.py'))
+    app = namespace['demo']
+    functions = {event.fn.__name__: event for event in app.fns.values() if event.fn}
+    for name in ('submit_request', 'visual_request', 'select_card', 'add_request'):
+        assert functions[name].concurrency_id == 'inference'
+        assert functions[name].concurrency_limit == 1
+    public = functions['submit_request']
+    assert public.api_name == 'recommend'
+    assert len(public.inputs) == 7 and len(public.outputs) == 4
+    assert isinstance(public.inputs[1], gr.Textbox)
+    output = functions['visual_request'].fn('fixture.pt', ['Leader'], 'Present', 25, False, 1, 42)
+    records = output[4]
+    assert output[6] is None
+    event = gr.SelectData(None, {'index': 0, 'value': None})
+    selected, detail, button = functions['select_card'].fn(records, event)
+    assert selected == records[0] and button.interactive
+    updated, *next_output = functions['add_request'].fn(selected, 'fixture.pt', ['Leader'], 'Present', 25, False, 1, 42)
+    assert f"1 {selected['Card']}" in updated
+    assert selected['Card'] not in [row['Card'] for row in next_output[4]]
+    assert next_output[6] is None
+    invalid = functions['visual_request'].fn('fixture.pt', [], 'Present', 25, False, 1, 42)
+    assert invalid[4] == [] and invalid[3] is None and invalid[6] is None
+    app.close()

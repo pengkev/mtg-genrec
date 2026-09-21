@@ -16,7 +16,10 @@ ROOT = APP_DIR.parent
 sys.path.insert(0, str(APP_DIR if (APP_DIR / "mtgdeck").exists() else ROOT / "src"))
 sys.path.insert(0, str(APP_DIR))
 
-from adapter import generate, resolve_device_mode
+from adapter import (
+    add_to_deck, generate, recommendation_gallery, resolve_device_mode,
+    select_recommendation,
+)
 from mtgdeck.artifacts import load_manifest, verify_assets
 from mtgdeck.inference import (
     DEFAULT_COMMANDER, DEFAULT_DECK, RECOMMENDATION_COLUMNS, VISIBLE_COLUMNS,
@@ -98,25 +101,37 @@ def create_demo():
     first = checkpoint_paths[0][0]
     with gr.Blocks(title="MTG GenRec", delete_cache=(3600, 3600)) as app:
         gr.api(deployment_info, api_name="deployment", api_visibility="undocumented", queue=False)
-        gr.Markdown("# MTG variational deck completion\nPaste a Commander and any partial deck. The model ranks legal missing cards; scores are relative model logits, not probabilities or power ratings.")
-        checkpoint = gr.Dropdown([(_checkpoint_label(Path(name)), name) for name, _ in checkpoint_paths], value=first, label="Checkpoint")
-        details = gr.Markdown(model_details(first))
+        gr.Markdown("# MTG GenRec\nNeural Commander deck completion")
+        recommendations = gr.State([])
+        selected = gr.State(None)
         with gr.Row():
-            with gr.Column(scale=1):
-                commander = gr.Textbox(value=DEFAULT_COMMANDER, label="Commander(s)", lines=3, info="One commander per line. Partner pairs are supported.")
-                count = gr.Slider(5, 100, value=25, step=5, label="Recommendations")
-                sample = gr.Checkbox(value=False, label="Sample the variational latent z", interactive=BUNDLES[first]["model"].variational, info="Off uses the stable posterior mean; on samples the learned posterior.")
-                draws = gr.Slider(1, 16, value=1, step=1, label="Latent draws to average", interactive=False)
-                seed = gr.Number(value=42, minimum=0, maximum=2_147_483_647, precision=0, label="Sampling seed")
-            with gr.Column(scale=2):
-                deck = gr.Textbox(value=DEFAULT_DECK, label="Partial mainboard", lines=14, info="Accepts 1 Card Name, 1x Card Name, or one bare name per line. Commander/Deck/Sideboard headings are recognized.")
-        submit = gr.Button("Recommend missing cards", variant="primary")
-        status = gr.Textbox(label="Status", interactive=False)
-        results = gr.Dataframe(headers=RECOMMENDATION_COLUMNS, datatype=["number", "str", "number", "str", "str"], interactive=False, label="Recommendations")
-        download = gr.File(label="Download CSV", interactive=False)
-        with gr.Accordion("Resolved partial deck", open=False):
-            visible = gr.Dataframe(headers=VISIBLE_COLUMNS, datatype=["str", "number", "str"], interactive=False)
-        gr.Markdown("Commander legality and color identity are enforced. The notebook's optional commander-count hybrid is not included because its training index is not stored in the checkpoint.")
+            with gr.Column(scale=1, min_width=300):
+                commander = gr.Dropdown(
+                    CATALOG.commander_choices(), value=[DEFAULT_COMMANDER],
+                    multiselect=True, max_choices=2, filterable=True,
+                    label="Commander(s)", info="Search for one commander or a legal pair.",
+                )
+                deck = gr.Textbox(value=DEFAULT_DECK, label="Partial mainboard", lines=14,
+                                  info="Paste Arena/Moxfield text, quantities, or one card per line.")
+                submit = gr.Button("Recommend", variant="primary")
+                status = gr.Textbox(label="Deck status", interactive=False)
+            with gr.Column(scale=3, min_width=300):
+                gallery = gr.Gallery(label="Recommended cards", columns=5, height="auto",
+                                     object_fit="contain", allow_preview=False,
+                                     interactive=False, elem_id="recommendation-gallery")
+                selected_details = gr.HTML("Select a card to inspect it.")
+                add = gr.Button("Add to deck", interactive=False, variant="primary")
+        with gr.Accordion("Advanced / model settings", open=False):
+            checkpoint = gr.Dropdown([(_checkpoint_label(Path(name)), name) for name, _ in checkpoint_paths], value=first, label="Checkpoint")
+            details = gr.Markdown(model_details(first))
+            count = gr.Slider(5, 100, value=25, step=5, label="Recommendations")
+            sample = gr.Checkbox(value=False, label="Sample the variational latent z", interactive=BUNDLES[first]["model"].variational, info="Off uses the stable posterior mean; on samples the learned posterior.")
+            draws = gr.Slider(1, 16, value=1, step=1, label="Latent draws to average", interactive=False)
+            seed = gr.Number(value=42, minimum=0, maximum=2_147_483_647, precision=0, label="Sampling seed")
+            results = gr.Dataframe(headers=RECOMMENDATION_COLUMNS, datatype=["number", "str", "number", "str", "str"], interactive=False, label="Ranked recommendations")
+            download = gr.File(label="Download CSV", interactive=False)
+            visible = gr.Dataframe(headers=VISIBLE_COLUMNS, datatype=["str", "number", "str"], interactive=False, label="Resolved partial deck")
+            gr.Markdown("Scores are relative model logits, not probabilities or power ratings. Commander legality and color identity are enforced. The optional commander-count hybrid is not included because its training index is not stored in the checkpoint.")
         checkpoint.change(change_model, checkpoint, [details, sample, draws], api_visibility="private")
         sample.change(lambda enabled: gr.Slider(interactive=enabled), sample, draws, api_visibility="private")
 
@@ -130,8 +145,38 @@ def create_demo():
                 Path(produced).unlink(missing_ok=True)
             return results, visible, status, cached
 
-        # Serial scoring protects the original global torch sampling seed.
-        submit.click(submit_request, [checkpoint, commander, deck, count, sample, draws, seed], [results, visible, status, download], api_name="recommend", concurrency_limit=1, concurrency_id="inference")
+        # Retain the text-based public API and its original four outputs.
+        api_commander = gr.Textbox(value=DEFAULT_COMMANDER, visible=False)
+        api_submit = gr.Button(visible=False)
+        api_submit.click(submit_request, [checkpoint, api_commander, deck, count, sample, draws, seed],
+                         [results, visible, status, download], api_name="recommend",
+                         concurrency_limit=1, concurrency_id="inference")
+
+        def visual_request(checkpoint, commanders, deck, count, sample, draws, seed):
+            table, resolved, message, csv = submit_request(
+                checkpoint, "\n".join(commanders or []), deck, count, sample, draws, seed,
+            )
+            records, images = recommendation_gallery(table, CATALOG)
+            return (table, resolved, message, csv, records,
+                    gr.Gallery(value=images, selected_index=None), None,
+                    "Select a card to inspect it.", gr.Button(interactive=False))
+
+        def select_card(records, event: gr.SelectData):
+            card, detail = select_recommendation(records, event.index if event.selected else None)
+            return card, detail, gr.Button(interactive=card is not None)
+
+        def add_request(card, checkpoint, commanders, deck, count, sample, draws, seed):
+            updated, message = add_to_deck(deck, card, CATALOG)
+            output = list(visual_request(checkpoint, commanders, updated, count, sample, draws, seed))
+            output[2] = message + "\n" + output[2]
+            return updated, *output
+
+        inputs = [checkpoint, commander, deck, count, sample, draws, seed]
+        outputs = [results, visible, status, download, recommendations, gallery, selected, selected_details, add]
+        # Both entry points and selection share a queue, protecting sampling and state.
+        submit.click(visual_request, inputs, outputs, api_visibility="private", concurrency_limit=1, concurrency_id="inference")
+        gallery.select(select_card, recommendations, [selected, selected_details, add], api_visibility="private", concurrency_limit=1, concurrency_id="inference")
+        add.click(add_request, [selected, *inputs], [deck, *outputs], api_visibility="private", concurrency_limit=1, concurrency_id="inference")
     return app.queue(max_size=32, default_concurrency_limit=1)
 
 
@@ -139,4 +184,7 @@ demo = create_demo()
 
 if __name__ == "__main__":
     default_host = "0.0.0.0" if os.environ.get("SPACE_ID") else "127.0.0.1"
-    demo.launch(server_name=os.environ.get("GRADIO_SERVER_NAME", default_host), server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")))
+    demo.launch(css="""
+        #recommendation-gallery .grid-container {grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) !important;}
+        #recommendation-gallery {max-width: 1000px;}
+    """, server_name=os.environ.get("GRADIO_SERVER_NAME", default_host), server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")))
