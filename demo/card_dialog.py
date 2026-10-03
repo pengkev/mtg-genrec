@@ -2,6 +2,29 @@
 DIALOG_TEMPLATE = '<dialog aria-labelledby="card-dialog-title"><div class="card-dialog-content">${value}</div></dialog>'
 DIALOG_JS = r"""
 let previousFocus = null;
+let parentViewport = null;
+const embedded = window.parent !== window && window.parentIFrame?.getPageInfo;
+function positionDialog(dialog) {
+    if (!parentViewport) return;
+    const info = parentViewport;
+    const top = Math.max(0, info.scrollTop - info.offsetTop);
+    const bottom = Math.min(info.iframeHeight, info.scrollTop - info.offsetTop + info.windowHeight);
+    const left = Math.max(0, info.scrollLeft - info.offsetLeft);
+    const right = Math.min(info.iframeWidth, info.scrollLeft - info.offsetLeft + info.windowWidth);
+    dialog.style.setProperty('--dialog-center-y', `${(top + bottom) / 2}px`);
+    dialog.style.setProperty('--dialog-center-x', `${(left + right) / 2}px`);
+    dialog.style.setProperty('--dialog-viewport-height', `${Math.max(0, bottom - top)}px`);
+}
+// Hugging Face expands the iframe to the document height. Follow the visible
+// intersection with the parent viewport, including parent scrolling/resizing.
+if (embedded) {
+    window.parentIFrame.getPageInfo(info => {
+        parentViewport = info;
+        const dialog = element.querySelector('dialog');
+        if (dialog) positionDialog(dialog);
+        if (props.value && !dialog?.open) syncDialog();
+    });
+}
 const oracleCache = new Map();
 function symbolText(text) {
     const fragment = document.createDocumentFragment();
@@ -38,7 +61,9 @@ async function refreshOracle(dialog) {
 function syncDialog() {
     const dialog = element.querySelector('dialog');
     if (!dialog) return;
+    positionDialog(dialog);
     if (props.value) {
+        if (embedded && !parentViewport) return;
         refreshOracle(dialog);
         if (!dialog.open) {
             previousFocus = document.activeElement;
@@ -85,10 +110,10 @@ SCROLLBAR_CSS = """
 """
 DIALOG_CSS = SCROLLBAR_CSS + """
 dialog { position: fixed !important; inset: auto !important;
-    top: 50% !important; left: 50% !important; transform: translate(-50%, -50%);
+    top: var(--dialog-center-y, 50%) !important; left: var(--dialog-center-x, 50%) !important; transform: translate(-50%, -50%);
     margin: 0 !important;
     box-sizing: border-box; width: min(900px, calc(100vw - 32px));
-    height: fit-content; max-width: calc(100vw - 32px); max-height: calc(100dvh - 40px);
+    height: fit-content; max-width: calc(100vw - 32px); max-height: calc(var(--dialog-viewport-height, 100dvh) - 40px);
     border: 0; border-radius: 20px; box-shadow: 0 24px 80px #0006;
     background: var(--background-fill-primary); color: var(--body-text-color);
     padding: 28px; overflow-y: auto; overscroll-behavior: contain; }
