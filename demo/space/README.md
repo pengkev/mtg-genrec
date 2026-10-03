@@ -13,8 +13,11 @@ short_description: An approach to card recommendation for decks in MTG
 
 # MTG GenRec
 
-Commander deck completion using Card2Vec and an attention VAE.
-Paste a commander and partial deck to rank legal missing cards. Scores are
+Commander, Modern, and Legacy deck completion using Card2Vec and an attention VAE.
+Choose a format at the top and paste a partial mainboard to rank legal missing
+cards. One selected model serves each format. Commander inputs appear only for
+Commander. Click a recommendation to open its rules and add one copy per click in a popup;
+Modern/Legacy additions respect copy limits and optional companion constraints. Scores are
 relative model logits, not probabilities or power ratings.
 
 Source of truth: [GitHub main](https://github.com/pengkev/mtg-genrec).

@@ -1,6 +1,6 @@
 # MTG GenRec
 
-MTG GenRec learns MTG card representations with Card2Vec and an attention VAE to recommend missing cards for a Commander deck. Recommendations use Oracle card identities and Commander legality filters.
+MTG GenRec learns MTG card representations with Card2Vec and an attention VAE to recommend missing cards for Commander, Modern, and Legacy decks. Recommendations use Oracle card identities, format legality, copy limits, and optional companion constraints.
 
 **scrape → data → train → demo**
 
@@ -92,9 +92,34 @@ Preparation and the demo prefer the updater's `data/oracle_cards.jsonl.gz`, fall
 jupyter notebook notebooks/genrec.ipynb
 ```
 
-Run the notebook from the first cell. It requires the prepared `data/decks_clean.jsonl` and Oracle metadata. The configuration cell controls data paths, seed, device, model size and ablations. It trains/loads Card2Vec, creates grouped train/validation/test splits, trains GenRec and compares recommendations using matched held-out cards. Manual EDHREC comparisons remain in the final section.
+Run the notebook from the first cell to train **separate Commander, Modern, and Legacy models**. Commander combines `commander`, `edh`, and `cedh`. Each model starts from the seed-42 384d static concatenation, trains on its general-format corpus, and then fine-tunes from its best base checkpoint on its own premium training decks. The card table is trainable at a lower learning rate in both stages.
 
-The default 896-dimensional Oracle-ID models use `data/card2vec_clean_oracleid_v2_896.model` and its NumPy sidecars, plus `checkpoints/attention_oracleid_v2_*.pt`. Keep sidecars with their Card2Vec model. The notebook retains its current algorithms; it loads datasets into memory and is not yet a resumable batch-training CLI.
+The notebook configuration specifies the broad and premium paths, epochs, and learning rates. It jointly groups both tiers before splitting, builds vocabulary only from their training partitions, and compares base versus premium checkpoints on matched held-out tasks from both tiers. Modern/Legacy use their own legality masks without Commander color constraints. Source embeddings stay unchanged. See [format training details](docs/genrec-formats.md).
+
+To execute the same training cells without Jupyter:
+
+```bash
+python scripts/run_genrec.py --run-name genrec_formats_v1
+# Optional single-format run:
+python scripts/run_genrec.py --formats modern --epochs 8 --premium-epochs 4 --run-name modern_v1
+# Bounded smoke run (not a representative benchmark):
+python scripts/run_genrec.py --max-records 500 --epochs 1 --premium-epochs 1 --run-name formats_smoke
+```
+
+Use a fresh run name. Each format writes base/premium checkpoints, data audits, split membership, and `results.json` under `checkpoints/<run-name>/<format>/`. The notebook provides `recommend_format(...)` for all three formats. The Commander demo discovers only compatible Commander checkpoints. Static pretraining may overlap downstream evaluation decks; the historical 896d recommendation lists remain labeled in the notebook appendix. Each format's data is loaded in memory; interrupted runs are not automatically resumed.
+
+For constructed-corpus static embedding research, use
+[`notebooks/card2vec_static_embeddings.ipynb`](notebooks/card2vec_static_embeddings.ipynb).
+It compares 128 and 256 dimensions across independent training seeds, using bounded
+unordered pair sampling, joblib, frozen semantic probes and retrieval benchmarks.
+Configuration controls resource use and reversible size quarantine; unknown
+provenance remains eligible for training. Results go to `artifacts/card2vec/`.
+The notebook defaults to reading saved results. Targeted stages can be run without
+executing the notebook: `python scripts/run_static_experiment.py --stage train`
+or `--stage evaluate`. `scripts/render_static_review.py` executes only saved-result
+review cells, excluding all model-training and evaluation cells. Original results
+remain in `artifacts/card2vec/static_v1/`.
+See the [results and prevention notes](docs/card2vec-static-results.md).
 
 ## 4. Demo
 
@@ -102,9 +127,9 @@ The default 896-dimensional Oracle-ID models use `data/card2vec_clean_oracleid_v
 python demo/app.py
 ```
 
-Select an available GenRec checkpoint, enter a Commander and partial deck, and request recommendations. The demo loads the checkpoint, Oracle metadata and commander eligibility. It does not require the training corpus or separate Card2Vec files. A fresh checkout needs trained checkpoints copied into `checkpoints/` or produced by the notebook.
+Choose Commander, Modern, or Legacy, enter a partial deck, and request recommendations. Commander also accepts a commander or partner pair. One premium-refined model serves each format. The demo loads the checkpoint, Oracle metadata and commander eligibility. It does not require the training corpus or separate Card2Vec files. A fresh checkout needs trained checkpoints copied into `checkpoints/` or produced by the notebook.
 
-The Gradio demo preserves checkpoint selection, Commander/partner inputs, deck
+The Gradio demo preserves per-format drafts, Commander/partner inputs, deck
 text parsing, legality and color-identity filters, seeded latent sampling,
 score tables, resolved-card warnings and CSV download. CPU inference is the
 local default after benchmarking; set `MTG_DEVICE=cuda` for a local GPU.
@@ -124,3 +149,10 @@ python -m pytest -q
 ```
 
 Tests use fixtures and temporary directories; they do not scrape live sites or train on local corpora. See [the AWS migration handoff](docs/aws-migration-audit.md) for current resource findings and remaining work. No AWS infrastructure is included.
+
+### Curated premium decks
+
+Collect the selected expert creators and MTGTop8 into a separate fine-tuning
+corpus with `python -m scrape.premium`. This excludes broad Moxfield discovery
+and Deckbox. See [premium collection and training inputs](docs/premium-decks.md)
+for the allowlist, resume commands, provenance and premium-only Commander manifest.

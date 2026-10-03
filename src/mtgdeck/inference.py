@@ -15,12 +15,14 @@ from typing import Any, Iterable, Mapping
 import torch
 
 
+from .deck_rules import (COMPANIONS, companion_card_allowed, companion_errors,
+                         copy_limit, shared_card_types)
 from .data import ORACLE_TOKEN_PREFIX, PAD_TOKEN, UNK_TOKEN, deck_to_tokens
 from .legality import CommanderCandidateIndex, OracleCatalog
 from .vae import Card2VecAttentionVAE, collate_token_rows, mask_present_logits
 
 
-IGNORED_SECTIONS = {"sideboard", "sideboard:", "maybeboard", "maybeboard:"}
+IGNORED_SECTIONS = {"sideboard", "sideboard:", "maybeboard", "maybeboard:", "companion", "companion:"}
 COMMANDER_SECTIONS = {"commander", "commander:", "commanders", "commanders:"}
 MAINBOARD_SECTIONS = {"deck", "deck:", "mainboard", "mainboard:"}
 SET_SUFFIX = re.compile(r"\s+\([A-Za-z0-9]{2,8}\)\s+[A-Za-z0-9-]+\s*$")
@@ -33,11 +35,53 @@ def available_checkpoints(checkpoint_dir: Path) -> list[Path]:
         checkpoint_dir / "attention_oracleid_v2_variational_frozen_896.pt",
         checkpoint_dir / "attention_oracleid_v2_deterministic_frozen_896.pt",
     ]
-    discovered = sorted(checkpoint_dir.glob("attention_oracleid_v2_*_896.pt"))
-    return [path for path in dict.fromkeys([*preferred, *discovered]) if path.exists()]
+    static = sorted([*checkpoint_dir.rglob("attention_oracleid_v2_static_*.pt"),
+                     *checkpoint_dir.rglob("attention_oracleid_v2_commander_static_*.pt"),
+                     *checkpoint_dir.rglob("attention_oracleid_v2_modern_static_*.pt"),
+                     *checkpoint_dir.rglob("attention_oracleid_v2_legacy_static_*.pt")],
+                    key=lambda path: ("premium" in path.stem, "finetuned" in path.stem, path.stat().st_mtime, str(path)),
+                    reverse=True)
+    discovered = sorted(path for path in checkpoint_dir.glob("attention_oracleid_v2_*.pt")
+                        if not path.stem.startswith(("attention_oracleid_v2_modern_", "attention_oracleid_v2_legacy_")))
+    return [path for path in dict.fromkeys([*static, *preferred, *discovered]) if path.exists()]
+
+
+def checkpoint_format(path: Path) -> str:
+    for fmt in ("modern", "legacy"):
+        if path.stem.startswith(f"attention_oracleid_v2_{fmt}_"):
+            return fmt
+    return "commander"
+
+
+def serving_checkpoints(paths: list[Path]) -> list[Path]:
+    """One checkpoint per format; prefer refined models from the latest run.
+
+    Discovery still returns all local checkpoints. Serving never selects on
+    test metrics or deletes historical weights.
+    """
+    selected = {}
+    for path in paths:
+        fmt = checkpoint_format(path)
+        priority = ("_premium_" in path.stem, "_static_" in path.stem,
+                    "finetuned" in path.stem, path.stat().st_mtime if path.exists() else 0, str(path))
+        if fmt not in selected or priority > selected[fmt][0]:
+            selected[fmt] = (priority, path)
+    return [selected[fmt][1] for fmt in ("commander", "modern", "legacy") if fmt in selected]
 
 
 def _checkpoint_label(path: Path) -> str:
+    for fmt in ("commander", "modern", "legacy"):
+        if path.stem.startswith(f"attention_oracleid_v2_{fmt}_static_"):
+            stage = "premium" if "_premium_" in path.stem else "base"
+            return f"{fmt.title()} · {stage} · {path.stem.rsplit('_', 1)[-1]}d ({path.parent.parent.name})"
+    if path.stem.startswith(("attention_oracleid_v2_static_", "attention_oracleid_v2_commander_static_")):
+        mode = "fine-tuned" if "finetuned" in path.stem else "frozen"
+        if "_premium_" in path.stem:
+            mode = "Commander premium"
+        elif "_commander_" in path.stem:
+            mode = "Commander base"
+        label = f"Static embeddings · {mode} · {path.stem.rsplit('_', 1)[-1]}d"
+        return f"{label} ({path.parent.as_posix()})" if path.parent.name else label
     name = path.stem.replace("attention_oracleid_v2_", "").replace("_896", "")
     labels = {
         "variational_finetuned": "Variational · fine-tuned Card2Vec (best NDCG)",
@@ -58,28 +102,36 @@ def _parse_line(raw_line: str) -> tuple[int, str] | None:
     return 1, line
 
 
+def parse_deck_zones(text: str, initial_zone: str = "mainboard") -> dict[str, Counter[str]]:
+    result = {zone: Counter() for zone in ("commanders", "mainboard", "sideboard", "companion")}
+    zone = initial_zone
+    for raw_line in text.splitlines():
+        heading = raw_line.strip().casefold().rstrip(":")
+        if heading in {"commander", "commanders"}:
+            zone = "commanders"
+        elif heading in {"deck", "mainboard"}:
+            zone = "mainboard"
+        elif heading in {"sideboard", "companion"}:
+            zone = heading
+        elif heading == "maybeboard":
+            zone = "ignore"
+        else:
+            if raw_line.strip().casefold().startswith("sb:"):
+                target = "sideboard"
+            else:
+                target = zone
+            parsed = _parse_line(raw_line)
+            if parsed is not None and target != "ignore":
+                quantity, name = parsed
+                result[target][name] += quantity
+    return result
+
+
 def parse_deck_text(text: str, initial_zone: str = "mainboard") -> dict[str, Counter[str]]:
     """Parse common Arena/Moxfield-style text into commander/mainboard counters."""
 
-    result = {"commanders": Counter(), "mainboard": Counter()}
-    zone = initial_zone
-    for raw_line in text.splitlines():
-        heading = raw_line.strip().casefold()
-        if heading in COMMANDER_SECTIONS:
-            zone = "commanders"
-            continue
-        if heading in MAINBOARD_SECTIONS:
-            zone = "mainboard"
-            continue
-        if heading in IGNORED_SECTIONS:
-            zone = "ignore"
-            continue
-        parsed = _parse_line(raw_line)
-        if parsed is None or zone == "ignore":
-            continue
-        quantity, name = parsed
-        result[zone][name] += quantity
-    return result
+    zones = parse_deck_zones(text, initial_zone)
+    return {zone: zones[zone] for zone in ("commanders", "mainboard")}
 
 
 def _resolve_name(catalog: OracleCatalog, raw_name: str) -> Mapping[str, Any] | None:
@@ -112,6 +164,20 @@ def _build_model(checkpoint: Mapping[str, Any], device: torch.device) -> Card2Ve
     return model
 
 
+class ConstructedCandidateIndex(CommanderCandidateIndex):
+    """Use snapshot format legality without Commander color restrictions."""
+
+    def __init__(self, catalog, vocab, format_name):
+        super().__init__(catalog, vocab)
+        self.format_mask = self.commander_legal.copy()
+        self.format_mask[:] = False
+        for token, card in self.token_cards.items():
+            self.format_mask[vocab[token]] = card.get("legalities", {}).get(format_name) == "legal"
+
+    def allowed_mask(self, deck):
+        return self.format_mask.copy()
+
+
 def load_bundle(
     checkpoint_path: str, oracle_path: str, device_name: str,
     eligibility_path: str | None = None, catalog: OracleCatalog | None = None,
@@ -122,9 +188,14 @@ def load_bundle(
     if not any(token.startswith(ORACLE_TOKEN_PREFIX) for token in vocab):
         raise ValueError("This demo requires an oracleid_v2 checkpoint.")
     catalog = catalog if catalog is not None else OracleCatalog.from_path(oracle_path, eligibility_path)
-    candidate_index = CommanderCandidateIndex(catalog, vocab)
+    format_name = checkpoint.get("format", checkpoint.get("config", {}).get("format", "commander"))
+    if format_name not in {"commander", "modern", "legacy"}:
+        raise ValueError(f"Unsupported checkpoint format: {format_name}")
+    candidate_index = (CommanderCandidateIndex(catalog, vocab) if format_name == "commander"
+                       else ConstructedCandidateIndex(catalog, vocab, format_name))
     return {
         "checkpoint": checkpoint,
+        "format": format_name,
         "model": _build_model(checkpoint, device),
         "vocab": vocab,
         "inverse_vocab": {index: token for token, index in vocab.items()},
@@ -140,16 +211,21 @@ def resolve_partial_deck(
     vocab: Mapping[str, int],
     commander_text: str,
     deck_text: str,
+    format_name: str = "commander",
+    companion_text: str = "",
 ) -> tuple[dict[str, Any], list[str], list[str]]:
-    commander_entries = parse_deck_text(commander_text, "commanders")["commanders"]
-    parsed_deck = parse_deck_text(deck_text, "mainboard")
-    commander_entries.update(parsed_deck["commanders"])
+    commander_entries = parse_deck_text(commander_text if format_name == "commander" else "", "commanders")["commanders"]
+    parsed_deck = parse_deck_zones(deck_text, "mainboard")
+    if format_name == "commander":
+        commander_entries.update(parsed_deck["commanders"])
+    elif parsed_deck["commanders"]:
+        raise ValueError(f"{format_name.title()} has no command zone. Remove the Commander section.")
     mainboard_entries = parsed_deck["mainboard"]
 
     unresolved: list[str] = []
     out_of_vocabulary: list[str] = []
 
-    def resolve_zone(entries: Iterable[tuple[str, int]]) -> list[dict[str, Any]]:
+    def resolve_zone(entries: Iterable[tuple[str, int]], track_vocabulary: bool = True) -> list[dict[str, Any]]:
         resolved: list[dict[str, Any]] = []
         for raw_name, quantity in entries:
             card = _resolve_name(catalog, raw_name)
@@ -157,7 +233,7 @@ def resolve_partial_deck(
                 unresolved.append(raw_name)
                 continue
             token = ORACLE_TOKEN_PREFIX + str(card["oracle_id"]).casefold()
-            if token not in vocab:
+            if track_vocabulary and token not in vocab:
                 out_of_vocabulary.append(str(card["name"]))
             resolved.append(
                 {
@@ -193,13 +269,37 @@ def resolve_partial_deck(
         "source_id": "partial",
         "url": None,
         "name": "Interactive partial deck",
-        "format": "commander",
+        "format": format_name,
         "date": None,
         "commanders": commanders,
         "mainboard": mainboard,
-        "sideboard": [],
+        "sideboard": merge_identities(resolve_zone(parsed_deck["sideboard"].items(), track_vocabulary=False)),
         "metadata": {},
     }
+    companion_entries = parsed_deck["companion"]
+    if companion_text:
+        if companion_entries and sum(companion_entries.values()) != 1:
+            raise ValueError("Choose exactly one companion.")
+        if companion_entries and any(_resolve_name(catalog, name) != catalog.resolve(companion_text) for name in companion_entries):
+            raise ValueError("The companion selector and pasted Companion section disagree.")
+        companion_entries = Counter({companion_text: 1})
+    if companion_entries:
+        if sum(companion_entries.values()) != 1:
+            raise ValueError("Choose exactly one companion.")
+        companion = _resolve_name(catalog, next(iter(companion_entries)))
+        if companion is None or companion['name'] not in COMPANIONS:
+            raise ValueError("Choose a recognized companion from the Oracle catalog.")
+        if companion.get('legalities', {}).get(format_name) != 'legal':
+            raise ValueError(f"{companion['name']} is not legal in {format_name.title()} in this snapshot.")
+        if format_name == 'commander':
+            if companion['name'] == 'Lutri, the Spellchaser':
+                raise ValueError("Lutri is banned as a Commander companion; ordinary mainboard/commander copies do not activate companion rules.")
+            if companion['name'] == 'Yorion, Sky Nomad':
+                raise ValueError("Yorion cannot be a Commander companion: Commander requires exactly 100 cards.")
+            identity = {color for item in commanders for color in catalog.resolve('', item['oracle_id']).get('color_identity', [])}
+            if not set(companion.get('color_identity', [])) <= identity:
+                raise ValueError("The companion is outside the commanders' color identity.")
+        partial['companion'] = dict(companion)
     return partial, unresolved, out_of_vocabulary
 
 
@@ -227,6 +327,15 @@ def recommend(
         dtype=torch.bool,
         device=device,
     ).unsqueeze(0)
+
+    companion = partial.get("companion")
+    if companion:
+        cards = [(bundle["catalog"].resolve('', item['oracle_id']), item['quantity'])
+                 for zone in ('commanders', 'mainboard') for item in partial[zone]]
+        shared = shared_card_types(cards)
+        for token, card in bundle['token_cards'].items():
+            if not companion_card_allowed(companion, card, shared):
+                allowed[0, vocab[token]] = False
 
     torch.manual_seed(seed)
     if device.type == "cuda":
@@ -292,6 +401,7 @@ class PreparedRequest:
 def prepare_request(
     bundle: Mapping[str, Any], commander_text: str, deck_text: str,
     count: int = 25, sample_latent: bool = False, draws: int = 1, seed: int = 42,
+    companion_text: str = "",
 ) -> PreparedRequest:
     """Validate public UI/API controls and resolve names before model inference."""
     for name, value, minimum, maximum in (
@@ -301,17 +411,48 @@ def prepare_request(
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= value <= maximum or int(value) != value:
             raise ValueError(f"{name} must be an integer between {minimum} and {maximum}.")
     partial, unresolved, out_of_vocabulary = resolve_partial_deck(
-        bundle["catalog"], bundle["vocab"], commander_text, deck_text,
+        bundle["catalog"], bundle["vocab"], commander_text, deck_text, bundle.get("format", "commander"), companion_text,
     )
     notices = []
     if unresolved:
         notices.append("Could not resolve: " + ", ".join(sorted(set(unresolved))))
-    if not partial["commanders"]:
+    if partial["format"] == "commander" and not partial["commanders"]:
         raise ValueError("Enter at least one resolvable Commander.")
     if out_of_vocabulary:
         notices.append("Resolved but absent from the training vocabulary: " + ", ".join(sorted(set(out_of_vocabulary))))
+    companion = partial.get('companion')
+    starting_cards = [(bundle['catalog'].resolve('', item['oracle_id']), item['quantity'])
+                      for zone in ('commanders', 'mainboard') for item in partial[zone]]
+    if companion:
+        if unresolved:
+            raise ValueError("Resolve unknown cards before checking companion constraints: " + ', '.join(sorted(set(unresolved))))
+        errors = companion_errors(companion, starting_cards)
+        if errors:
+            raise ValueError(f"The partial starting deck violates {companion['name']}'s companion requirement: " + ', '.join(errors))
+        if companion['name'] == 'Yorion, Sky Nomad' and sum(q for _, q in starting_cards) < 80:
+            notices.append("Yorion requires at least 80 mainboard cards in the finished deck; this deck is still partial.")
+    if partial['format'] != 'commander':
+        totals = Counter()
+        cards_by_id = {}
+        for zone in ('mainboard', 'sideboard'):
+            for item in partial[zone]:
+                totals[item['oracle_id']] += item['quantity']
+                cards_by_id[item['oracle_id']] = bundle['catalog'].resolve('', item['oracle_id'])
+        if companion and companion['oracle_id'] not in {item['oracle_id'] for item in partial['sideboard']}:
+            totals[companion['oracle_id']] += 1
+            cards_by_id[companion['oracle_id']] = companion
+        for oid, quantity in totals.items():
+            card = cards_by_id[oid]
+            limit = copy_limit(card, partial['format'])
+            if limit is not None and quantity > limit:
+                raise ValueError(f"{card['name']} exceeds the {limit}-copy limit across mainboard and sideboard.")
+        for card, _ in starting_cards:
+            if card.get('legalities', {}).get(partial['format']) != 'legal':
+                raise ValueError(f"{card['name']} is not legal in {partial['format'].title()} in this snapshot.")
     visible = [
         ["Commander" if zone == "commanders" else "Mainboard", item["quantity"], item["display_name"]]
         for zone in ("commanders", "mainboard") for item in partial[zone]
     ]
+    if companion:
+        visible.append(["Companion", 1, companion['name']])
     return PreparedRequest(partial, visible, notices, int(count), bool(sample_latent), int(draws), int(seed))

@@ -10,7 +10,7 @@ Scraping, training and evaluation retain their existing local architecture.
 `demo/app.py` calls `demo/adapter.py` for Gradio formatting and
 `src/mtgdeck/inference.py` for the parsing, loading and ranking functions extracted
 from the previous Streamlit demo. The model and legality implementations are
-unchanged. The UI retains all three checkpoint choices, Commander/partner input,
+shared with training. The UI supports three formats, Commander/partner input,
 partial-deck sections and quantities, unknown/out-of-vocabulary notices, 5–100
 recommendations, posterior mean or seeded sampling, 1–16 draws, resolved-deck and
 score tables, validation metadata and CSV export. Scores remain raw relative
@@ -19,22 +19,35 @@ Requests are serialized to preserve the original global PyTorch sampling seed.
 Invalid requests clear stale output and downloads. CSV files expire from the
 Gradio cache after an hour.
 
-The player UI searches the local catalog for up to two commanders, shows ranked
-card art, and lets players select a recommendation and add it to the pasted
-mainboard. Adding skips already represented Oracle identities and keeps the current
-recommendations available for further selections. Click **Recommend** to score the
-updated deck through the serialized queue. Model controls, tables and CSV export live in
-the collapsed **Advanced / model settings** accordion. The text-based
-`/recommend` API retains its seven inputs and four outputs.
+The player UI chooses Commander, Modern, or Legacy at the top and serves one
+premium-refined model per format by default. Deck drafts are preserved per format;
+changing format clears previous recommendations and downloads. Modern and Legacy
+have no command zone. For local experiments, `MTG_ALL_CHECKPOINTS=1` loads all
+saved checkpoints and exposes a format-filtered selector in Advanced settings.
+The export script always selects at most one model per format; historical files
+are not removed. An older hosted manifest cannot serve formats whose assets have
+not yet been exported and published.
 
-Gallery images come from snapshot `image_uris` or `card_faces`, with a selectable
-placeholder when art is missing; no Scryfall API lookup is performed. The pinned
-Oracle artifact includes top-level image metadata for all single-faced cards.
-Its image restoration preserved every original record and all inference and
-legality fields; future exports also retain `image_uris`. Refresh art using the
-existing asset publication procedure below and commit the refreshed manifest.
-Gradio 6.27's fixed gallery column count is adapted with a small CSS grid
-rule for responsive wrapping; selection displays details below the gallery.
+Click a recommendation to open a native modal with card art when available,
+Oracle rules text, mana cost, type, stats, and model score. **Add to deck** adds one copy per click inside the modal, with immediate feedback that keeps it open.
+Modern/Legacy allow up to four ordinary copies across mainboard and sideboard;
+basic lands and Oracle-text exceptions use their own limits. Companion selection
+is optional and explicit, with construction restrictions applied to the partial
+starting deck, recommendations and additions. See [format rules](genrec-formats.md).
+Adding does not run inference. Click **Recommend** to score the updated deck.
+
+The modal supports Escape, a close button and clicking the backdrop, with native
+focus trapping. The gallery wraps to two columns on phones. Scrollbars are hidden
+while scrolling remains available. Advanced controls contain sampling, tables
+and CSV export. The text-based `/recommend` API retains seven inputs and four
+outputs; a pasted Companion section supplies companion selection for that API.
+
+Gallery images and initial modal details use snapshot metadata, with selectable
+placeholders when art is missing. The browser refreshes modal Oracle text from
+Scryfall when available and keeps snapshot text if that request fails. Exports
+retain images, faces, mana values/costs, keywords and card stats alongside the
+inference and legality fields. Gradio's custom HTML component implements a native
+browser dialog using delegated events that survive content updates.
 
 CPU is the local default. On the local machine with two CPU threads, normal
 requests took 18–31 ms and the default
@@ -63,19 +76,20 @@ host before tuning further. There is no per-request loading or lazy CUDA move.
 
 `scripts/build_space.py` copies an explicit allowlist into an empty build
 directory: `app.py`, `adapter.py`, Space README/requirements/asset manifest, and
-the seven required `mtgdeck` modules. These modules are copied byte-for-byte from
+the required `mtgdeck` modules and card-dialog component. These modules are copied byte-for-byte from
 `src/mtgdeck`; no second implementation is maintained. `data.py`, `vae.py` and
 `legality.py` also contain local development helpers, but are required to define
 the existing inference types and model. Their presence does not require a
 training corpus or training packages. `card2vec.py` and `recommend.py` are not
 shipped because the demo does not import their training/baseline logic.
 
-The only binary assets are three existing VAE checkpoints (~112 MiB each), a
-compact Oracle reference snapshot (~5 MiB) and commander eligibility (~162 KiB).
+The binary assets contain one selected VAE checkpoint per available format, a
+compact Oracle reference snapshot and commander eligibility. New exports preserve
+checkpoint format metadata and the card fields needed for companion checks.
 Export strips local paths and training settings, preserves tensors/vocab/metrics,
 and includes every Oracle record and every field used by the catalog and legality
 rules. No deck dataset, optimizer, notebook, test, scraper, separate Card2Vec
-model, credential or cache is included. The total is approximately 340.5 MiB.
+model, credential or cache is included. Artifact sizes are recorded in the generated manifest.
 Keep all generated output under ignored `build/`; never Git-add it.
 
 `demo/space/artifacts.json` records SHA-256, byte length and content-addressed
@@ -84,6 +98,17 @@ builder and app verify checksums. The Space stores these inference assets;
 GitHub stores only their manifest. Source is never pulled from the Space.
 `source.json` in each deployment records the GitHub source commit and whether
 the build source was dirty. Production deployments must use clean GitHub source.
+
+For a local deployment review without changing the pinned hosted manifest:
+
+```bash
+python scripts/export_space_assets.py --output build/review-assets --manifest build/review-artifacts.json
+python scripts/build_space.py --output build/review-space --assets-dir build/review-assets --manifest build/review-artifacts.json
+python scripts/smoke_space.py --app-dir build/review-space
+```
+
+The smoke check exercises every exported format through the public API, verifies
+CSV downloads and invalid requests, and compares ranking with direct inference.
 
 ## Dependencies
 

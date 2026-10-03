@@ -16,19 +16,20 @@ from mtgdeck.artifacts import asset_entries, load_manifest, verify_assets
 
 # These existing modules are required by the inference import graph. Copy them
 # byte-for-byte at build time; never maintain a second mtgdeck implementation.
-INFERENCE_MODULES = ("__init__.py", "data.py", "metadata.py", "legality.py", "vae.py", "inference.py", "artifacts.py")
+INFERENCE_MODULES = ("__init__.py", "data.py", "metadata.py", "legality.py", "vae.py", "inference.py", "artifacts.py", "deck_rules.py")
 SOURCE_FILES = {
-    "demo/app.py": "app.py", "demo/adapter.py": "adapter.py",
+    "demo/app.py": "app.py", "demo/adapter.py": "adapter.py", "demo/card_dialog.py": "card_dialog.py",
     "demo/space/README.md": "README.md", "demo/space/requirements.txt": "requirements.txt",
     "demo/space/artifacts.json": "artifacts.json",
     **{f"src/mtgdeck/{name}": f"mtgdeck/{name}" for name in INFERENCE_MODULES},
 }
 
 
-def build(output: Path, assets_dir: Path | None = None, revision: str | None = None) -> Path:
+def build(output: Path, assets_dir: Path | None = None, revision: str | None = None, manifest_path: Path | None = None) -> Path:
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"Output directory must be empty: {output}")
-    manifest = load_manifest(ROOT / "demo" / "space" / "artifacts.json")
+    manifest_path = manifest_path or ROOT / "demo" / "space" / "artifacts.json"
+    manifest = load_manifest(manifest_path)
     if assets_dir is None:
         asset_revision = revision or manifest.get("revision")
         if not asset_revision or not re.fullmatch(r"[0-9a-f]{40}", asset_revision):
@@ -44,7 +45,7 @@ def build(output: Path, assets_dir: Path | None = None, revision: str | None = N
     for source, destination in SOURCE_FILES.items():
         target = output / destination
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / source, target)
+        shutil.copyfile(manifest_path if source == "demo/space/artifacts.json" else ROOT / source, target)
     for entry in asset_entries(manifest):
         destination = output / entry["path"]
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +62,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build" / "space")
     parser.add_argument("--assets-dir", type=Path)
+    parser.add_argument("--manifest", type=Path, help="Optional staged asset manifest for a local review build")
     parser.add_argument("--asset-revision", help="Optional immutable Hub commit override")
     args = parser.parse_args()
-    output = build(args.output, args.assets_dir, args.asset_revision)
+    output = build(args.output, args.assets_dir, args.asset_revision, args.manifest)
     print(f"Built {len(list(output.rglob('*.*')))} files in {output}")

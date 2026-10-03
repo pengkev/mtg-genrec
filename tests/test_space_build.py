@@ -28,7 +28,7 @@ def test_build_is_allowlisted_and_verifies_assets(tmp_path, monkeypatch):
     monkeypatch.setattr(build_space, "ROOT", root)
     monkeypatch.setattr(build_space.subprocess, "check_output", lambda cmd, **kw: "a" * 40 if "rev-parse" in cmd else "")
     output = build_space.build(tmp_path / "space", assets)
-    files = {str(p.relative_to(output)) for p in output.rglob("*") if p.is_file()}
+    files = {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()}
     assert files == {*build_space.SOURCE_FILES.values(), relative, "source.json", ".gitattributes"}
     for source, destination in build_space.SOURCE_FILES.items():
         assert (root / source).read_bytes() == (output / destination).read_bytes()

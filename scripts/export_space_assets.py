@@ -15,18 +15,19 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import torch
 from mtgdeck.artifacts import sha256_file
-from mtgdeck.inference import available_checkpoints
+from mtgdeck.inference import available_checkpoints, serving_checkpoints
 from mtgdeck.metadata import default_oracle_path, iter_oracle_cards
 
 MODEL_CONFIG_KEYS = {
     "variational", "experiment", "model_dim", "heads", "blocks", "latent_dim",
-    "pool_queries", "decoder_queries", "initial_logit_scale",
+    "pool_queries", "decoder_queries", "initial_logit_scale", "format",
 }
 # Every field used by OracleCatalog / CommanderCandidateIndex, including alias
 # preference and commander-pair rules. Preserve every card, its order and faces.
 ORACLE_FIELDS = {
     "name", "oracle_id", "color_identity", "type_line", "oracle_text", "legalities",
     "games", "layout", "lang", "released_at", "card_faces", "image_uris",
+    "mana_cost", "cmc", "keywords", "power", "toughness", "loyalty", "defense",
 }
 
 
@@ -42,7 +43,7 @@ def export_assets(output: Path, manifest_path: Path) -> dict:
         return {"name": name, "path": relative, "sha256": digest, "size": destination.stat().st_size}
 
     manifest = {"schema_version": 1, "repo_id": "pengkev/mtg-genrec", "repo_type": "space", "checkpoints": []}
-    checkpoints = available_checkpoints(ROOT / "checkpoints")
+    checkpoints = serving_checkpoints(available_checkpoints(ROOT / "checkpoints"))
     if not checkpoints:
         raise FileNotFoundError("No Oracle-ID checkpoints in checkpoints/")
     with tempfile.TemporaryDirectory() as temporary:
