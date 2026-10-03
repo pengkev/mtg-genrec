@@ -4,6 +4,7 @@ pytest==9.1.1
 gensim==4.4.0
 scipy==1.18.1
 joblib==1.6.0
+scikit-learn==1.8.0
 requests==2.34.2
 beautifulsoup4==4.15.0
 cloudscraper==1.2.71
