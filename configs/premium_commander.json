@@ -1,0 +1,7 @@
+{
+  "formats": ["commander", "cedh"],
+  "inputs": [
+    {"path": "../data/premium/formats/commander.jsonl", "optional": true},
+    {"path": "../data/premium/formats/cedh.jsonl", "optional": true}
+  ]
+}
