@@ -142,11 +142,9 @@ def create_demo():
                     visible=initial_format == "commander",
                     label="Commander(s)", info="Search for one commander or a legal pair.",
                 )
-                companion = gr.Dropdown(companion_choices(CATALOG, initial_format), value=None,
+                companion = gr.Dropdown(companion_choices(CATALOG, initial_format), value=[],
+                                        multiselect=True, max_choices=1, filterable=True,
                                         label="Companion (optional)", info="Choose only when using its companion ability. Restrictions apply to the starting deck.")
-                remove_companion = gr.Button("Remove companion", size="sm", visible=False)
-                companion.change(lambda name: gr.Button(visible=bool(name)), companion, remove_companion, api_visibility="private")
-                remove_companion.click(lambda: gr.Dropdown(value=None), outputs=companion, api_visibility="private")
                 deck = gr.Textbox(value=default_deck(initial_format), label="Partial mainboard", lines=10,
                                   info="Paste Arena/Moxfield text. Include quantities; Sideboard and Companion sections are recognized.")
                 submit = gr.Button("Recommend", variant="primary")
@@ -176,7 +174,7 @@ def create_demo():
             saved_drafts = dict(saved_drafts)
             previous_format = BUNDLES[previous_checkpoint].get("format", "commander")
             saved_drafts[previous_format] = (deck_text, commanders, companion_name)
-            text, leaders, chosen_companion = saved_drafts.get(format_name, (default_deck(format_name), [DEFAULT_COMMANDER], None))
+            text, leaders, chosen_companion = saved_drafts.get(format_name, (default_deck(format_name), [DEFAULT_COMMANDER], []))
             name = preferred_model(format_name)
             return (gr.Dropdown(choices=[(_checkpoint_label(Path(n)), n) for n in format_models(format_name)], value=name),
                     gr.Textbox(value=text), gr.Dropdown(value=leaders, visible=format_name == "commander"),
@@ -216,19 +214,19 @@ def create_demo():
 
         def visual_request(checkpoint, commanders, deck, count, sample, draws, seed, companion=""):
             table, resolved, message, csv = submit_request(
-                checkpoint, "\n".join(commanders or []), deck, count, sample, draws, seed, companion,
+                checkpoint, "\n".join(commanders or []), deck, count, sample, draws, seed, next(iter(companion or []), ""),
             )
             records, images = recommendation_gallery(table, CATALOG)
             return table, resolved, message, csv, records, gr.Gallery(value=images, selected_index=None), None, ""
 
         def select_card(records, checkpoint, deck, companion, event: gr.SelectData):
             card, _ = select_recommendation(records, event.index if event.selected else None)
-            return card, card_modal(card, CATALOG, deck, BUNDLES[checkpoint].get("format", "commander"), CATALOG.resolve(companion or ""))
+            return card, card_modal(card, CATALOG, deck, BUNDLES[checkpoint].get("format", "commander"), CATALOG.resolve(next(iter(companion or []), "")))
 
         def add_request(card, deck, checkpoint, companion, commanders, event: gr.EventData):
             format_name = BUNDLES[checkpoint].get("format", "commander")
             quantity = 1
-            updated, message = add_to_deck(deck, card, CATALOG, format_name, quantity, companion or "", "\n".join(commanders or []))
+            updated, message = add_to_deck(deck, card, CATALOG, format_name, quantity, next(iter(companion or []), ""), "\n".join(commanders or []))
             # Leave the dialog DOM, focus, and scroll position untouched on Add.
             return updated, message
 

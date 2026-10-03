@@ -43,13 +43,13 @@ function syncDialog() {
         if (!dialog.open) {
             previousFocus = document.activeElement;
             dialog.showModal();
-            dialog.querySelector('[data-close]')?.focus();
+            dialog.querySelector('[data-close]')?.focus({ preventScroll: true });
         }
     } else if (dialog.open) dialog.close();
 }
 function closeDialog() {
     element.querySelector('dialog')?.close();
-    previousFocus?.focus();
+    previousFocus?.focus({ preventScroll: true });
 }
 element.addEventListener('click', (event) => {
     const dialog = element.querySelector('dialog');
@@ -67,7 +67,7 @@ element.addEventListener('click', (event) => {
     }
 });
 // Delegation survives HTML updates after selecting or adding a card.
-element.addEventListener('cancel', () => previousFocus?.focus(), true);
+element.addEventListener('cancel', () => previousFocus?.focus({ preventScroll: true }), true);
 watch('value', syncDialog);
 syncDialog();
 """
@@ -84,7 +84,9 @@ SCROLLBAR_CSS = """
 }
 """
 DIALOG_CSS = SCROLLBAR_CSS + """
-dialog { position: fixed; inset: 0; margin: auto !important;
+dialog { position: fixed !important; inset: auto !important;
+    top: 50% !important; left: 50% !important; transform: translate(-50%, -50%);
+    margin: 0 !important;
     box-sizing: border-box; width: min(900px, calc(100vw - 32px));
     height: fit-content; max-width: calc(100vw - 32px); max-height: calc(100dvh - 40px);
     border: 0; border-radius: 20px; box-shadow: 0 24px 80px #0006;
