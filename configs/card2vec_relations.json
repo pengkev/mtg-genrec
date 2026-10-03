@@ -1,0 +1,33 @@
+{
+  "version": "relations_v1",
+  "scope": "Curated research labels, not exhaustive answers or format legality claims. Review slot constraints before expanding.",
+  "roles": {
+    "cheap red burn": ["Lightning Bolt", "Chain Lightning", "Lightning Strike", "Searing Spear", "Incinerate"],
+    "one mana green dorks": ["Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves"],
+    "repeatable blink": ["Soulherder", "Teleportation Circle", "Thassa, Deep-Dwelling", "Conjurer's Closet"],
+    "spell token payoffs": ["Young Pyromancer", "Third Path Iconoclast", "Monastery Mentor", "Murmuring Mystic"],
+    "creature sweepers": ["Wrath of God", "Day of Judgment", "Damnation", "Supreme Verdict"]
+  },
+  "slots": {
+    "one mana green dork": ["Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves"],
+    "two mana red three damage": ["Lightning Strike", "Searing Spear", "Incinerate"],
+    "cheap red interaction, sorcery speed acceptable": ["Lightning Bolt", "Chain Lightning"],
+    "white four mana sweeper": ["Wrath of God", "Day of Judgment"],
+    "one mana black discard, target restrictions matter": ["Thoughtseize", "Inquisition of Kozilek", "Duress"]
+  },
+  "complements": [
+    ["Thassa's Oracle", ["Demonic Consultation", "Tainted Pact"]],
+    ["Niv-Mizzet, Parun", ["Curiosity", "Ophidian Eye", "Tandem Lookout"]],
+    ["Stuffy Doll", ["Guilty Conscience"]],
+    ["Reanimate", ["Entomb"]],
+    ["Stoneforge Mystic", ["Batterskull", "Kaldra Compleat", "Umezawa's Jitte"]],
+    ["Lion's Eye Diamond", ["Infernal Tutor"]],
+    ["Underworld Breach", ["Brain Freeze", "Lion's Eye Diamond"]]
+  ],
+  "cross_format": [],
+  "cross_format_schema": {
+    "query": ["source card"], "targets": ["analogous target card"],
+    "source_format": "curator supplied", "target_format": "curator supplied",
+    "concept": "role and deckbuilding constraints", "source": "reviewer or citation"
+  }
+}

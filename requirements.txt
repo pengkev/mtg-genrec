@@ -6,6 +6,7 @@ gensim
 scipy
 matplotlib
 joblib
+scikit-learn
 
 # Scraping and metadata
 requests

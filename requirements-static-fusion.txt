@@ -1,0 +1,13 @@
+# Python 3.13; matches the saved v3.1 numerical stack.
+numpy==2.4.3
+scipy==1.17.1
+pandas==3.0.1
+scikit-learn==1.8.0
+gensim==4.4.0
+joblib==1.5.3
+pyarrow==23.0.1
+threadpoolctl==3.7.0
+requests==2.34.2
+pytest==9.1.1
+ipython==9.17.1
+nbformat==5.11.1
