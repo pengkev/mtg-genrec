@@ -11,7 +11,7 @@ import time
 from bs4 import BeautifulSoup
 from datetime import date, datetime
 from mtgdeck.data import BOARD_NAMES, clean_board, decklist_card_names, make_decklist_record, normalize_deck_cards, positive_quantity
-from scrape.http import PaginationError, ScrapeHTTPError, request_with_retries, validate_page_fingerprint
+from scrape.http import PaginationError, ScrapeHTTPError, TransientRequestError, request_with_retries, validate_page_fingerprint
 from scrape.sources import EXPORT_SECTION_HEADERS, MTGTOP8, MTGTOP8_FORMATS
 from scrape.state import Checkpoint, CorpusOutputs, finish_page
 from typing import Any
@@ -118,7 +118,10 @@ def validate_mtgtop8_search(html: str, format_code: str, page: int) -> int:
     total = re.search(r"([\d,]+)\s+decks matching", soup.get_text(" ", strip=True))
     if selected is None or selected.get("value") != format_code:
         raise PaginationError("MTGTop8 search did not honor the format filter")
-    if current is None or int(current.get("value") or 1) != page:
+    # MTGTop8 currently leaves this hidden value blank even when it honors
+    # current_page=2 and returns the second result page. Validate an explicit
+    # value when present; validate actual page progression with fingerprints.
+    if current is None or (current.get("value") and int(current["value"]) != page):
         raise PaginationError("MTGTop8 search returned an unexpected page")
     if total is None:
         raise PaginationError("MTGTop8 search is missing its result count")
@@ -166,6 +169,10 @@ def collect_mtgtop8_format(
             if total > (page - 1) * 25:
                 raise PaginationError("MTGTop8 reported matches but no deck rows could be parsed")
             finish_page(outputs, checkpoint, "mtgtop8", format_name, job, complete=True)
+            logging.info(
+                "[mtgtop8/%s] %s page %s; search complete with no remaining decks",
+                format_name, job["key"], page,
+            )
             time.sleep(args.mtgtop8_delay)
             continue
         fingerprint = validate_page_fingerprint(job, (str(record["url"]) for record in records))
@@ -199,6 +206,27 @@ def collect_mtgtop8_format(
                     parsed = parse_mtgo_decklist(export.text, format_name)
                     if not parsed["mainboard"]:
                         raise ValueError(f"Invalid MTGTop8 export for {source_id}")
+            except TransientRequestError as exc:
+                # A listing can be healthy while one old event page is
+                # permanently broken. Do not let that deck disable MTGTop8 for
+                # every other format in this run. A transport failure defers
+                # this page without advancing its cursor; already-written decks
+                # are deduplicated when the page is retried in a later cycle.
+                if exc.status is None:
+                    logging.warning(
+                        "[mtgtop8/%s] deferring page after deck %s request failed: %s",
+                        format_name, source_id, exc,
+                    )
+                    page_complete = False
+                    break
+                if not 500 <= exc.status < 600:
+                    raise
+                logging.warning(
+                    "[mtgtop8/%s] skipping deck %s after repeated server errors: %s",
+                    format_name, source_id, exc,
+                )
+                outputs.mark_source(format_name, "mtgtop8", source_id)
+                continue
             except ScrapeHTTPError as exc:
                 if exc.status not in (404, 410):
                     raise
@@ -240,8 +268,7 @@ def collect_mtgtop8_format(
                 page_complete = index == len(records) - 1
                 break
         if page_complete:
-            job["next_page"] = page + 1
-            job["last_fingerprint"] = fingerprint
+            checkpoint.update_job(job, next_page=page + 1, last_fingerprint=fingerprint)
         finish_page(outputs, checkpoint, "mtgtop8", format_name, job,
                     complete=page_complete and page * 25 >= total)
         logging.info("[mtgtop8/%s] %s page %s; fetched %s; known %s; combined +%s; format +%s",

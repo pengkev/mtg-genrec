@@ -311,6 +311,8 @@ def collect_deckbox_format(
                 raise
             logging.warning("[deckbox/%s] %s stopped at page %s: %s; moving to another search",
                             format_name, job["key"], page, exc)
+            if not job.get("expanded") and job["key"].startswith("card:"):
+                checkpoint.mark_dirty()
             checkpoint.add_searches(
                 "deckbox", format_name, expand_capped_deckbox_search(job)
             )
@@ -392,9 +394,7 @@ def collect_deckbox_format(
                 format_name, selected_count, added_searches,
             )
         if page_complete:
-            job["next_page"] = page + 1
-            job["last_fingerprint"] = fingerprint
-            job["next_url"] = next_url
+            checkpoint.update_job(job, next_page=page + 1, last_fingerprint=fingerprint, next_url=next_url)
         finish_page(outputs, checkpoint, "deckbox", format_name, job, complete=page_complete and not next_url)
         logging.info("[deckbox/%s] %s page %s; fetched %s; known %s; combined +%s; deckbox corpus +%s",
                      format_name, job["key"], page, fetched, known, combined_appended, format_appended)

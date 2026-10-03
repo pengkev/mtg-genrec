@@ -66,7 +66,11 @@ def moxfield_boards(
     return result
 
 
-def moxfield_seed_searches() -> list[dict[str, Any]]:
+def moxfield_seed_searches(users: list[str] | None = None) -> list[dict[str, Any]]:
+    if users:
+        return [{"key": f"author:{user.casefold()}", "params": {"authorUserNames": user,
+                 "sortType": "created", "sortDirection": "descending"}}
+                for user in dict.fromkeys(users)]
     return [
         {"key": f"{sort}:{direction}", "params": {"sortType": sort, "sortDirection": direction}}
         for sort, direction in (
@@ -123,7 +127,11 @@ def collect_moxfield_format(
     args: argparse.Namespace,
     session: requests.Session | None = None,
 ) -> tuple[int, int, int]:
-    checkpoint.add_searches("moxfield", format_name, moxfield_seed_searches())
+    users = getattr(args, "moxfield_users", None)
+    seeds = moxfield_seed_searches(users)
+    checkpoint.add_searches("moxfield", format_name, seeds)
+    if users:
+        checkpoint.select_searches("moxfield", format_name, [job["key"] for job in seeds])
     session = session or make_moxfield_session()
     fetched = combined_appended = format_appended = known = missing = 0
     for _ in range(args.max_pages_per_format or sys.maxsize):
@@ -159,6 +167,8 @@ def collect_moxfield_format(
         fingerprint = validate_page_fingerprint(job, (str(row["publicId"]) for row in summaries))
         capped = int(payload.get("totalResults", 0)) >= 10_000
         if capped:
+            if not job.get("expanded"):
+                checkpoint.mark_dirty()
             checkpoint.add_searches("moxfield", format_name, expand_capped_moxfield_search(job))
         page_complete = True
         for index, summary in enumerate(summaries):
@@ -182,6 +192,10 @@ def collect_moxfield_format(
             raw = detail.json()
             if not isinstance(raw, Mapping) or not isinstance(raw.get("boards"), Mapping):
                 raise ValueError(f"Invalid Moxfield deck response for {source_id}")
+            author = (raw.get("createdByUser") or raw.get("createdBy") or {}).get("userName")
+            expected_author = job["params"].get("authorUserNames")
+            if expected_author and (not author or author.casefold() != expected_author.casefold()):
+                raise PaginationError(f"Moxfield author filter mismatch for {source_id}")
             fetched += 1
             if raw.get("format", MOXFIELD_FORMATS[format_name]) != MOXFIELD_FORMATS[format_name]:
                 logging.warning("[moxfield/%s] deck %s changed format; skipping", format_name, source_id)
@@ -189,14 +203,16 @@ def collect_moxfield_format(
                 continue
             checkpoint.add_searches(
                 "moxfield", format_name,
-                moxfield_card_searches(raw, getattr(args, "moxfield_discovery", "cards")),
+                moxfield_card_searches(raw, "off" if getattr(args, "moxfield_users", None) else getattr(args, "moxfield_discovery", "cards")),
             )
             boards = moxfield_boards(raw, valid_names)
             decklist = make_decklist_record(
                 source="moxfield", source_id=source_id, format_name=format_name,
                 url=f"https://www.moxfield.com/decks/{source_id}", name=raw.get("name"),
                 deck_date=raw.get("createdAtUtc") or raw.get("createdAt"), boards=boards,
-                metadata={"user_bracket": raw.get("userBracket", raw.get("bracket")),
+                metadata={"creator": author,
+                          **({"quality_tier": "curated_creator", "curation_url": f"https://moxfield.com/users/{expected_author}"} if expected_author else {}),
+                          "user_bracket": raw.get("userBracket", raw.get("bracket")),
                           "auto_bracket": raw.get("autoBracket"),
                           "updated_at": raw.get("lastUpdatedAtUtc"),
                           "hubs": raw.get("hubNames", []) or []},
@@ -214,8 +230,7 @@ def collect_moxfield_format(
         total_pages = int(payload.get("totalPages", page + 1))
         complete = page_complete and page >= total_pages
         if page_complete:
-            job["next_page"] = page + 1
-            job["last_fingerprint"] = fingerprint
+            checkpoint.update_job(job, next_page=page + 1, last_fingerprint=fingerprint)
         finish_page(outputs, checkpoint, "moxfield", format_name, job, complete=complete,
                     reason="result window cap" if complete and capped else None)
         logging.info(

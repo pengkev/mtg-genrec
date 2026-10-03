@@ -777,6 +777,11 @@ def test_mtgtop8_wrong_format_or_page_cannot_advance():
         mtgtop8.validate_mtgtop8_search(html, 'EX', 2)
 
 
+def test_mtgtop8_blank_page_marker_allows_later_pages():
+    html = '<select name="format"><option value="MO" selected>Modern</option></select><input name="current_page" value=""><div>50 decks matching</div>'
+    assert mtgtop8.validate_mtgtop8_search(html, 'MO', 2) == 50
+
+
 def test_main_flushes_partial_progress_on_interrupt(tmp_path, monkeypatch):
     def collect(format_name, outputs, checkpoint, *_args):
         record = data.make_decklist_record(
@@ -852,7 +857,19 @@ def test_transport_failure_is_structured_and_stops_after_local_retries(monkeypat
     assert sleeps == [2]
 
 
-def test_main_opens_source_circuit_after_one_exhausted_transport_failure(tmp_path, monkeypatch):
+def test_rate_limit_zero_retry_after_still_cools_down(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(http.time, 'sleep', sleeps.append)
+    limited = scrape_response(status=429)
+    limited.headers['Retry-After'] = '0'
+    session = ScrapeSession([limited, scrape_response(text='ok')])
+    assert http.request_with_retries(
+        session, 'GET', 'https://example.test', timeout=1, retries=2,
+    ).text == 'ok'
+    assert sleeps == [30]
+
+
+def test_main_cools_source_for_round_after_exhausted_transport_failure(tmp_path, monkeypatch):
     visits = []
 
     def collect(format_name, *_args):
@@ -866,6 +883,7 @@ def test_main_opens_source_circuit_after_one_exhausted_transport_failure(tmp_pat
     monkeypatch.setattr(scraper, 'collect_mtgtop8_format', collect)
     result = scraper.main([
         '--sources', 'mtgtop8', '--formats', 'modern', 'legacy', 'vintage',
+        '--max-pages-per-format', '1',
         '--oracle-refresh', 'never', '--output', str(tmp_path / 'embedding.jsonl'),
         '--format-output-dir', str(tmp_path / 'formats'),
         '--checkpoint', str(tmp_path / 'checkpoint.json'),
@@ -875,6 +893,31 @@ def test_main_opens_source_circuit_after_one_exhausted_transport_failure(tmp_pat
     checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json')
     assert checkpoint.current_search('mtgtop8', 'modern')['next_page'] == 1
     assert checkpoint.current_search('mtgtop8', 'legacy')['next_page'] == 1
+
+
+def test_main_retries_cooled_source_in_next_round(tmp_path, monkeypatch):
+    visits = []
+
+    def collect(format_name, *_args):
+        visits.append(format_name)
+        if len(visits) == 1:
+            raise http.TransientRequestError(
+                'https://www.mtgtop8.com/search', requests.Timeout('temporarily unavailable'))
+        return 0, 0, 0
+
+    monkeypatch.setattr(scraper, 'refresh_oracle_cards', lambda *_args: None)
+    monkeypatch.setattr(scraper, 'load_oracle_names', lambda *_args: {'island'})
+    monkeypatch.setattr(scraper, 'make_mtgtop8_session', object)
+    monkeypatch.setattr(scraper, 'collect_mtgtop8_format', collect)
+    result = scraper.main([
+        '--sources', 'mtgtop8', '--formats', 'modern', 'legacy',
+        '--max-pages-per-format', '2', '--oracle-refresh', 'never',
+        '--output', str(tmp_path / 'embedding.jsonl'),
+        '--format-output-dir', str(tmp_path / 'formats'),
+        '--checkpoint', str(tmp_path / 'checkpoint.json'),
+    ])
+    assert result == 1
+    assert visits == ['modern', 'modern', 'legacy']
 
 
 def test_permanently_missing_id_is_cached_without_a_deck_record(tmp_path):
@@ -906,6 +949,51 @@ def test_mtgtop8_malformed_deck_is_skipped_without_losing_later_decks(tmp_path):
     assert outputs.has_source('modern', 'mtgtop8', 'bad')
     saved = json.loads((tmp_path / 'formats/modern.jsonl').read_text())
     assert saved['source_id'] == 'good'
+    outputs.close()
+
+
+def test_mtgtop8_broken_event_does_not_disable_later_decks(tmp_path):
+    listing = '''<select name="format"><option value="MO" selected>Modern</option></select>
+        <input name="current_page" value="1"><div>2 decks matching</div>
+        <tr class="hover_tr"><td><a href="event?e=1&d=bad&f=MO">Bad</a></td></tr>
+        <tr class="hover_tr"><td><a href="event?e=1&d=good&f=MO">Good</a></td></tr>'''
+    server_error = scrape_response(status=500)
+    args = scrape_args()
+    args.retries = 1
+    session = ScrapeSession([
+        scrape_response(text=listing),
+        scrape_response(text='<html>not a deck</html>'),
+        server_error,
+        scrape_response(text='4 [SET] Island'),
+    ])
+    outputs = scrape_outputs(tmp_path)
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json')
+    assert mtgtop8.collect_mtgtop8_format(
+        'modern', outputs, checkpoint, {'island'}, args, session,
+    ) == (1, 1, 1)
+    assert outputs.has_source('modern', 'mtgtop8', 'bad')
+    outputs.close()
+
+
+def test_mtgtop8_deck_timeout_defers_page_without_advancing(tmp_path):
+    listing = '''<select name="format"><option value="MO" selected>Modern</option></select>
+        <input name="current_page" value=""><div>30 decks matching</div>
+        <tr class="hover_tr"><td><a href="event?e=1&d=slow&f=MO">Slow</a></td></tr>'''
+    args = scrape_args()
+    args.retries = 1
+    session = ScrapeSession([
+        scrape_response(text=listing),
+        requests.ReadTimeout('slow deck export'),
+    ])
+    outputs = scrape_outputs(tmp_path)
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json')
+    assert mtgtop8.collect_mtgtop8_format(
+        'modern', outputs, checkpoint, {'island'}, args, session,
+    ) == (0, 0, 0)
+    bucket = checkpoint.state['mtgtop8:modern']
+    assert bucket['searches']['year:2026:2026-01-01']['next_page'] == 1
+    assert 'year:2026:2026-01-01' in bucket['queue']
+    assert not outputs.has_source('modern', 'mtgtop8', 'slow')
     outputs.close()
 
 
@@ -1114,3 +1202,188 @@ def test_mtgtop8_event_metadata_parser_retains_tournament_fields():
     assert mtgtop8.parse_event_metadata(html, 'other') == (None, 128)
     assert mtgtop8.parse_event_metadata('', '123') == (None, None)
     assert scraper.parse_args(['--mtgtop8-event-metadata']).mtgtop8_event_metadata
+
+
+def test_checkpoint_interval_batches_dirty_pages_and_skips_clean_writes(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(state.time, 'monotonic', lambda: clock[0])
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json', interval_seconds=300)
+    checkpoint.save('mtgtop8', 'modern', 1)  # Initial durable baseline.
+    baseline = checkpoint.path.read_bytes()
+    clock[0] = 10
+    checkpoint.save('mtgtop8', 'modern', 2)
+    assert checkpoint.dirty
+    assert checkpoint.path.read_bytes() == baseline
+    clock[0] = 299
+    checkpoint.save('mtgtop8', 'modern', 3)
+    assert checkpoint.path.read_bytes() == baseline
+    clock[0] = 300
+    checkpoint.save('mtgtop8', 'modern', 4)
+    assert state.Checkpoint(checkpoint.path).next_page('mtgtop8', 'modern', 0) == 4
+    assert not checkpoint.dirty
+    stamp = checkpoint.path.stat().st_mtime_ns
+    clock[0] = 900
+    checkpoint.save('mtgtop8', 'modern', 4)
+    assert checkpoint.write() is False
+    assert checkpoint.path.stat().st_mtime_ns == stamp
+
+
+def test_forced_dirty_save_flushes_dependencies_and_resets_interval(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(state.time, 'monotonic', lambda: clock[0])
+    calls = []
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json', interval_seconds=300,
+                                  before_write=lambda: calls.append('flush'))
+    original = state.os.replace
+    def replace(src, dst):
+        calls.append('replace')
+        original(src, dst)
+    monkeypatch.setattr(state.os, 'replace', replace)
+    checkpoint.save('mtgtop8', 'modern', 1)
+    clock[0] = 20
+    checkpoint.save('mtgtop8', 'modern', 2)
+    assert calls == ['flush', 'replace']
+    assert checkpoint.write() is True  # Graceful shutdown/handled failure path.
+    assert calls == ['flush', 'replace', 'flush', 'replace']
+    clock[0] = 310
+    checkpoint.save('mtgtop8', 'modern', 3)
+    assert checkpoint.dirty
+    assert state.Checkpoint(checkpoint.path).next_page('mtgtop8', 'modern', 0) == 2
+
+
+def test_failed_dependency_flush_never_advances_checkpoint(tmp_path):
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json', interval_seconds=300)
+    checkpoint.save('mtgtop8', 'modern', 1)
+    original = checkpoint.path.read_bytes()
+    checkpoint.save('mtgtop8', 'modern', 2)
+    def fail():
+        raise OSError('corpus flush failed')
+    checkpoint.before_write = fail
+    with pytest.raises(OSError, match='flush failed'):
+        checkpoint.write()
+    assert checkpoint.dirty
+    assert checkpoint.path.read_bytes() == original
+    checkpoint.before_write = None
+    assert checkpoint.write()
+
+
+def test_checkpoint_failed_replace_retains_dirty_and_retry_deadline(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(state.time, 'monotonic', lambda: clock[0])
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json', interval_seconds=300)
+    checkpoint.save('mtgtop8', 'modern', 1)
+    original = state.os.replace
+    def fail(*_):
+        raise OSError('disk failure')
+    monkeypatch.setattr(state.os, 'replace', fail)
+    clock[0] = 300
+    with pytest.raises(OSError):
+        checkpoint.save('mtgtop8', 'modern', 2)
+    assert checkpoint.dirty
+    assert checkpoint._last_write == 0
+    monkeypatch.setattr(state.os, 'replace', original)
+    assert checkpoint.write(force=False)
+    assert checkpoint._last_write == 300
+
+
+def test_search_mutations_dirty_but_identical_setup_does_not(tmp_path):
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json', interval_seconds=300)
+    searches = [{'key': 'one', 'params': {}}]
+    checkpoint.add_searches('moxfield', 'modern', searches)
+    checkpoint.write()
+    checkpoint.add_searches('moxfield', 'modern', searches)
+    checkpoint.select_searches('moxfield', 'modern', ['one'])
+    checkpoint.refresh_completed()
+    assert checkpoint.write() is False
+    job = checkpoint.current_search('moxfield', 'modern')
+    checkpoint.update_job(job, expanded=True)
+    assert checkpoint.dirty
+    checkpoint.write()
+    checkpoint.finish_search_page('moxfield', 'modern', job, complete=True)
+    assert checkpoint.dirty
+    checkpoint.write()
+    checkpoint.refresh_completed()
+    assert checkpoint.dirty
+    checkpoint.write()
+    assert checkpoint.remove_searches('moxfield', 'modern', ['one']) == 1
+    assert checkpoint.dirty
+
+
+def test_stale_checkpoint_replays_page_without_duplicate_outputs(tmp_path):
+    path = tmp_path / 'checkpoint.json'
+    checkpoint = state.Checkpoint(path, interval_seconds=3600)
+    checkpoint.add_searches('moxfield', 'modern', [{'key': 'one', 'params': {}}])
+    checkpoint.write()
+    outputs = state.CorpusOutputs(tmp_path / 'embedding.jsonl', tmp_path / 'formats',
+                                  seen_path=tmp_path / 'seen.sqlite3')
+    outputs.load(['modern'])
+    record = data.make_decklist_record(
+        source='moxfield', source_id='42', format_name='modern', url='https://moxfield.com/decks/42',
+        boards={'mainboard': [{'name': 'Island', 'quantity': 4}]})
+    outputs.append('modern', ['island'], record)
+    outputs.mark_source('modern', 'moxfield', 'unavailable')
+    job = checkpoint.current_search('moxfield', 'modern')
+    checkpoint.update_job(job, next_page=2)
+    state.finish_page(outputs, checkpoint, 'moxfield', 'modern', job)
+    outputs.close()
+    # Simulate losing dirty in-memory cursor without shutdown checkpoint save.
+    recovered = state.Checkpoint(path, interval_seconds=3600)
+    assert recovered.current_search('moxfield', 'modern')['next_page'] == 1
+    resumed = state.CorpusOutputs(tmp_path / 'embedding.jsonl', tmp_path / 'formats',
+                                  seen_path=tmp_path / 'seen.sqlite3')
+    try:
+        resumed.load(['modern'])
+        assert resumed.has_source('modern', 'moxfield', '42')
+        assert resumed.has_source('modern', 'moxfield', 'unavailable')
+        assert resumed.append('modern', ['island'], record) == (False, False)
+    finally:
+        resumed.close()
+    assert len((tmp_path / 'embedding.jsonl').read_text().splitlines()) == 1
+    assert len((tmp_path / 'formats/modern.jsonl').read_text().splitlines()) == 1
+
+
+def test_checkpoint_interval_cli_defaults_and_validation():
+    assert scraper.parse_args([]).checkpoint_interval_seconds == 300
+    assert scraper.parse_args(['--checkpoint-interval-seconds', '0']).checkpoint_interval_seconds == 0
+    for invalid in ('-1', 'nan', 'inf'):
+        with pytest.raises(SystemExit):
+            scraper.parse_args(['--checkpoint-interval-seconds', invalid])
+
+
+@pytest.mark.parametrize('author', ['BoshNRoll', 'UnselectedCreator'])
+def test_curated_moxfield_checks_owner_and_disables_discovery(tmp_path, author):
+    outputs = scrape_outputs(tmp_path)
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json')
+    args = scrape_args()
+    args.moxfield_users = ['BoshNRoll']
+    raw = {'createdByUser': {'userName': author}, 'format': 'modern', 'boards': {
+        'mainboard': {'cards': {'one': {'quantity': 4, 'card': {
+            'name': 'Lightning Bolt', 'id': 'bolt-id', 'type_line': 'Instant'}}}}}}
+    session = ScrapeSession([mox_listing(['one']), scrape_response(raw)])
+    try:
+        if author == 'UnselectedCreator':
+            with pytest.raises(http.PaginationError, match='author filter'):
+                moxfield.collect_moxfield_format('modern', outputs, checkpoint, {'lightning bolt'}, args, session)
+            assert outputs.combined.appended == 0
+        else:
+            assert moxfield.collect_moxfield_format('modern', outputs, checkpoint, {'lightning bolt'}, args, session) == (1, 1, 1)
+            record = json.loads((tmp_path / 'formats/modern.jsonl').read_text())
+            assert record['metadata']['creator'] == author
+            assert record['metadata']['quality_tier'] == 'curated_creator'
+        assert set(checkpoint.state['moxfield:modern']['searches']) == {'author:boshnroll'}
+    finally:
+        outputs.close()
+
+
+def test_curated_moxfield_ignores_broad_checkpoint_jobs(tmp_path):
+    outputs = scrape_outputs(tmp_path)
+    checkpoint = state.Checkpoint(tmp_path / 'checkpoint.json')
+    checkpoint.add_searches('moxfield', 'modern', moxfield.moxfield_seed_searches())
+    args = scrape_args()
+    args.moxfield_users = ['BoshNRoll']
+    session = ScrapeSession([mox_listing([], total=0, pages=0)])
+    try:
+        moxfield.collect_moxfield_format('modern', outputs, checkpoint, {'island'}, args, session)
+        assert session.calls[0][2]['params']['authorUserNames'] == 'BoshNRoll'
+    finally:
+        outputs.close()

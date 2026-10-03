@@ -6,6 +6,7 @@ import hashlib
 import logging
 import requests
 import time
+from scrape.operations import check_stop
 from collections.abc import Iterable, Mapping
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -62,6 +63,7 @@ def request_with_retries(
     last_error: Exception | None = None
     last_status: int | None = None
     for attempt in range(1, retries + 1):
+        check_stop()
         try:
             response = session.request(method, url, timeout=timeout, **kwargs)
             retryable_status = (
@@ -73,7 +75,13 @@ def request_with_retries(
                 last_error = ScrapeHTTPError(response.status_code, url)
                 if attempt == retries:
                     break
-                wait = retry_after_seconds(response, min(60.0, 2.0**attempt))
+                fallback = min(60.0, 2.0**attempt)
+                wait = retry_after_seconds(response, fallback)
+                # Moxfield sometimes returns Retry-After: 0 while its rate-limit
+                # window is still active. An immediate retry only consumes the
+                # final attempt and disables the source for the rest of the run.
+                if response.status_code == 429 and wait <= 0:
+                    wait = 30.0
                 logging.warning("HTTP %s from %s; retrying in %.1fs", response.status_code, url, wait)
                 time.sleep(wait)
                 continue

@@ -17,6 +17,7 @@ from scrape.sources import DECKBOX_CORPUS, DECKBOX_FORMATS, DEFAULT_FORMATS, MOX
 from scrape.sources.deckbox import collect_deckbox_format, deckbox_seed_searches, make_deckbox_session
 from scrape.sources.moxfield import collect_moxfield_format, make_moxfield_session, moxfield_seed_searches
 from scrape.sources.mtgtop8 import collect_mtgtop8_format, make_mtgtop8_session, mtgtop8_seed_searches
+from scrape.operations import check_stop, scraper_entry
 from scrape.state import Checkpoint, CorpusOutputs, migrate_deckbox_records, migrate_mtgtop8_formats
 from typing import Any
 
@@ -70,6 +71,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Per-source/per-format resume state.",
     )
     parser.add_argument(
+        "--checkpoint-interval-seconds",
+        type=checkpoint_interval,
+        default=300,
+        help="Minimum interval between dirty page-boundary saves (default: 300; 0 saves every changed page). Shutdown/failure saves bypass the interval.",
+    )
+    parser.add_argument(
         "--max-pages-per-format",
         type=positive_int,
         default=None,
@@ -93,6 +100,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="01/01/1993",
         help="MTGTop8 archive start in DD/MM/YYYY form (default: 01/01/1993).",
     )
+    parser.add_argument("--moxfield-users", nargs="+", help="Restrict Moxfield to these creators; disables broad discovery.")
     parser.add_argument(
         "--moxfield-discovery", choices=("cards", "commanders", "off"), default="cards",
         help="Expand Moxfield searches using discovered nonland cards and commanders (default: cards).",
@@ -179,6 +187,13 @@ def positive_float(value: str) -> float:
     parsed = float(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def checkpoint_interval(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
     return parsed
 
 
@@ -278,101 +293,108 @@ def main(argv: list[str] | None = None) -> int:
         flush_every=500,
         seen_path=args.format_output_dir / ".diverse_scraper.seen.sqlite3",
     )
-    output_corpora = [
-        *formats,
-        *([DECKBOX_CORPUS] if "deckbox" in args.sources else []),
-    ]
-    logging.info("Indexing corpora with temporary on-disk deduplication (2 MiB shared page cache)")
-    existing, existing_by_format = outputs.load(output_corpora)
-    logging.info(
-        "Indexed %s existing corpus rows (%s distinct fingerprints)",
-        f"{existing:,}",
-        f"{len(outputs.combined.fingerprints):,}",
-    )
-    logging.info(
-        "Indexed %s existing rows across %s format corpora in %s",
-        f"{sum(existing_by_format.values()):,}",
-        len(existing_by_format),
-        args.format_output_dir,
-    )
-    logging.info("Loading search checkpoint from %s", args.checkpoint)
-    checkpoint = Checkpoint(args.checkpoint, fresh=args.fresh)
-    for source, format_name in build_scrape_buckets(args.sources, formats):
-        if source == "moxfield":
-            checkpoint.add_searches(source, format_name, moxfield_seed_searches())
-        elif source == "deckbox":
-            checkpoint.add_searches(source, format_name, deckbox_seed_searches(format_name))
-        else:
-            checkpoint.add_searches(source, format_name, mtgtop8_seed_searches(args.date_start))
-    if args.refresh_searches:
-        checkpoint.refresh_completed()
-    for source, format_name in build_scrape_buckets(args.sources, formats):
-        jobs = checkpoint.state[checkpoint.key(source, format_name)]["searches"]
-        if source == "mtgtop8":
-            keys = [job["key"] for job in mtgtop8_seed_searches(args.date_start)]
-        elif source == "moxfield":
-            keys = [key for key, job in jobs.items()
-                    if (args.moxfield_discovery == "cards" or "cardId" not in job["params"])
-                    and (args.moxfield_discovery != "off" or "commanderCardId" not in job["params"])]
-        else:
-            selected_ids = {
-                card["card_id"] for card in outputs.selected_deckbox_cards(format_name)
-            } if args.deckbox_discovery != "off" else set()
-            removed = checkpoint.remove_searches(
-                source,
-                format_name,
-                (key for key in jobs if key.startswith("card:")
-                 and key.split(":", 2)[1] not in selected_ids),
-            )
-            if removed:
-                logging.info(
-                    "[deckbox/%s] removed %s legacy unranked card windows from the checkpoint",
-                    format_name, f"{removed:,}",
-                )
-            jobs = checkpoint.state[checkpoint.key(source, format_name)]["searches"]
-            keys = [
-                key for key in jobs
-                if not key.startswith("card:") or key.split(":", 2)[1] in selected_ids
-            ]
-        checkpoint.select_searches(source, format_name, keys)
-
-    total_fetched = total_combined = total_by_format = 0
-    collectors = {
-        "moxfield": collect_moxfield_format,
-        "mtgtop8": collect_mtgtop8_format,
-        "deckbox": collect_deckbox_format,
-    }
-    sessions: dict[str, requests.Session] = {}
-    unavailable_sources: set[str] = set()
-    live_sources = list(dict.fromkeys(args.sources))
-    for source in live_sources:
-        source_formats = formats_for_source(source, formats)
-        skipped = [format_name for format_name in formats if format_name not in source_formats]
-        if skipped:
-            logging.info("[%s] unsupported formats skipped: %s", source, ", ".join(skipped))
-        try:
-            session_factories = {
-                "moxfield": make_moxfield_session,
-                "mtgtop8": make_mtgtop8_session,
-                "deckbox": make_deckbox_session,
-            }
-            sessions[source] = session_factories[source]()
-        except Exception:
-            logging.exception("Could not initialize %s; its format buckets will be skipped", source)
-            unavailable_sources.add(source)
-
-    active = [
-        bucket
-        for bucket in build_scrape_buckets(live_sources, formats)
-        if bucket[0] not in unavailable_sources and not checkpoint.is_complete(*bucket)
-    ]
-    bucket_format_additions: dict[tuple[str, str], int] = {bucket: 0 for bucket in active}
-
+    checkpoint = None
+    sessions = {}
     try:
+        output_corpora = [
+            *formats,
+            *([DECKBOX_CORPUS] if "deckbox" in args.sources else []),
+        ]
+        logging.info("Indexing corpora with temporary on-disk deduplication (2 MiB shared page cache)")
+        existing, existing_by_format = outputs.load(output_corpora)
+        logging.info(
+            "Indexed %s existing corpus rows (%s distinct fingerprints)",
+            f"{existing:,}",
+            f"{len(outputs.combined.fingerprints):,}",
+        )
+        logging.info(
+            "Indexed %s existing rows across %s format corpora in %s",
+            f"{sum(existing_by_format.values()):,}",
+            len(existing_by_format),
+            args.format_output_dir,
+        )
+        logging.info("Loading search checkpoint from %s", args.checkpoint)
+        checkpoint = Checkpoint(args.checkpoint, fresh=args.fresh,
+                                interval_seconds=args.checkpoint_interval_seconds,
+                                before_write=outputs.flush)
+        for source, format_name in build_scrape_buckets(args.sources, formats):
+            if source == "moxfield":
+                checkpoint.add_searches(source, format_name, moxfield_seed_searches(args.moxfield_users))
+            elif source == "deckbox":
+                checkpoint.add_searches(source, format_name, deckbox_seed_searches(format_name))
+            else:
+                checkpoint.add_searches(source, format_name, mtgtop8_seed_searches(args.date_start))
+        if args.refresh_searches:
+            checkpoint.refresh_completed()
+        for source, format_name in build_scrape_buckets(args.sources, formats):
+            jobs = checkpoint.state[checkpoint.key(source, format_name)]["searches"]
+            if source == "mtgtop8":
+                keys = [job["key"] for job in mtgtop8_seed_searches(args.date_start)]
+            elif source == "moxfield" and args.moxfield_users:
+                keys = [job["key"] for job in moxfield_seed_searches(args.moxfield_users)]
+            elif source == "moxfield":
+                keys = [key for key, job in jobs.items()
+                        if (args.moxfield_discovery == "cards" or "cardId" not in job["params"])
+                        and (args.moxfield_discovery != "off" or "commanderCardId" not in job["params"])]
+            else:
+                selected_ids = {
+                    card["card_id"] for card in outputs.selected_deckbox_cards(format_name)
+                } if args.deckbox_discovery != "off" else set()
+                removed = checkpoint.remove_searches(
+                    source,
+                    format_name,
+                    (key for key in jobs if key.startswith("card:")
+                     and key.split(":", 2)[1] not in selected_ids),
+                )
+                if removed:
+                    logging.info(
+                        "[deckbox/%s] removed %s legacy unranked card windows from the checkpoint",
+                        format_name, f"{removed:,}",
+                    )
+                jobs = checkpoint.state[checkpoint.key(source, format_name)]["searches"]
+                keys = [
+                    key for key in jobs
+                    if not key.startswith("card:") or key.split(":", 2)[1] in selected_ids
+                ]
+            checkpoint.select_searches(source, format_name, keys)
+
+        total_fetched = total_combined = total_by_format = 0
+        collectors = {
+            "moxfield": collect_moxfield_format,
+            "mtgtop8": collect_mtgtop8_format,
+            "deckbox": collect_deckbox_format,
+        }
+        sessions: dict[str, requests.Session] = {}
+        unavailable_sources: set[str] = set()
+        live_sources = list(dict.fromkeys(args.sources))
+        for source in live_sources:
+            source_formats = formats_for_source(source, formats)
+            skipped = [format_name for format_name in formats if format_name not in source_formats]
+            if skipped:
+                logging.info("[%s] unsupported formats skipped: %s", source, ", ".join(skipped))
+            try:
+                session_factories = {
+                    "moxfield": make_moxfield_session,
+                    "mtgtop8": make_mtgtop8_session,
+                    "deckbox": make_deckbox_session,
+                }
+                sessions[source] = session_factories[source]()
+            except Exception:
+                logging.exception("Could not initialize %s; its format buckets will be skipped", source)
+                unavailable_sources.add(source)
+
+        active = [
+            bucket
+            for bucket in build_scrape_buckets(live_sources, formats)
+            if bucket[0] not in unavailable_sources and not checkpoint.is_complete(*bucket)
+        ]
+        bucket_format_additions: dict[tuple[str, str], int] = {bucket: 0 for bucket in active}
+
         failures = 0
         cycle = 0
         while active and (args.max_pages_per_format is None or cycle < args.max_pages_per_format):
             cycle += 1
+            cooldown_sources: set[str] = set()
             logging.info(
                 "Round-robin cycle %s/%s: visiting one page from %s active format buckets",
                 cycle,
@@ -381,7 +403,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             next_active: list[tuple[str, str]] = []
             for source, format_name in active:
+                check_stop()
                 if source in unavailable_sources:
+                    continue
+                if source in cooldown_sources:
+                    next_active.append((source, format_name))
                     continue
                 current_total = bucket_format_additions[(source, format_name)]
                 remaining = (
@@ -409,19 +435,24 @@ def main(argv: list[str] | None = None) -> int:
                     raise
                 except Exception as exc:
                     failures += 1
-                    source_failure = (
-                        isinstance(exc, TransientRequestError)
-                        or isinstance(exc, ScrapeHTTPError) and exc.status in (401, 403)
+                    transient_failure = isinstance(exc, TransientRequestError)
+                    permanent_source_failure = (
+                        isinstance(exc, ScrapeHTTPError) and exc.status in (401, 403)
                     )
-                    if source_failure:
+                    if permanent_source_failure:
                         unavailable_sources.add(source)
+                    elif transient_failure:
+                        cooldown_sources.add(source)
+                        next_active.append((source, format_name))
+                    if transient_failure or permanent_source_failure:
                         detail = (
                             f"HTTP {exc.status}"
                             if getattr(exc, "status", None) is not None
                             else type(getattr(exc, "cause", exc)).__name__
                         )
                         logging.error(
-                            "Circuit open for %s after exhausted %s; all of its searches remain resumable",
+                            "%s for %s after exhausted %s; all of its searches remain resumable",
+                            "Circuit open" if permanent_source_failure else "Source cooling down until next round",
                             source,
                             detail,
                         )
@@ -451,14 +482,19 @@ def main(argv: list[str] | None = None) -> int:
             args.format_output_dir,
         )
     finally:
-        outputs.close()
-        checkpoint.write()
-        for session in sessions.values():
-            close = getattr(session, "close", None)
-            if close is not None:
-                close()
+        try:
+            outputs.close()
+        finally:
+            try:
+                if checkpoint is not None:
+                    checkpoint.write()
+            finally:
+                for session in sessions.values():
+                    close = getattr(session, "close", None)
+                    if close is not None:
+                        close()
     return 1 if failures or unavailable_sources else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(scraper_entry(main))

@@ -9,7 +9,7 @@ import os
 import sqlite3
 import tempfile
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from mtgdeck.data import cards_fingerprint, decklist_fingerprint
 from pathlib import Path
 from scrape.sources import DECKBOX_CARD_COLORS, DECKBOX_CARD_ROLES, DECKBOX_CORPUS
@@ -552,7 +552,14 @@ class CorpusOutputs:
 class Checkpoint:
     VERSION = 4
 
-    def __init__(self, path: Path, fresh: bool = False):
+    def __init__(self, path: Path, fresh: bool = False, *, interval_seconds: float = 0,
+                 before_write: Callable[[], None] | None = None):
+        if interval_seconds < 0:
+            raise ValueError("Checkpoint interval must be nonnegative")
+        self.interval_seconds = interval_seconds
+        self.before_write = before_write
+        self.dirty = fresh or not path.exists()
+        self._last_write = None if self.dirty else time.monotonic()
         self.path = path
         self.state: dict[str, dict[str, Any]] = {}
         self.legacy: dict[str, dict[str, Any]] = {}
@@ -564,6 +571,7 @@ class Checkpoint:
                     self.state = buckets
                 self.legacy = raw.get("legacy_buckets", {})
             elif isinstance(raw, dict) and raw.get("schema_version") == 3:
+                self.dirty = True
                 self.legacy = raw.get("buckets", {})
                 logging.info("Upgrading v3 checkpoints to resumable search partitions")
             else:
@@ -580,14 +588,33 @@ class Checkpoint:
     def is_complete(self, source: str, format_name: str) -> bool:
         return bool(self.state.get(self.key(source, format_name), {}).get("complete", False))
 
-    def save(self, source: str, format_name: str, next_page: int, complete: bool = False) -> None:
-        self.state.setdefault(self.key(source, format_name), {}).update({
-            "next_page": next_page,
-            "complete": complete,
-        })
-        self.write()
+    def mark_dirty(self) -> None:
+        """Call when mutating an existing search job outside checkpoint methods."""
+        self.dirty = True
 
-    def write(self) -> None:
+    def update_job(self, job: dict[str, Any], **changes: Any) -> None:
+        if any(key not in job or job[key] != value for key, value in changes.items()):
+            job.update(changes)
+            self.mark_dirty()
+
+    def save(self, source: str, format_name: str, next_page: int, complete: bool = False) -> None:
+        bucket = self.state.setdefault(self.key(source, format_name), {})
+        changes = {"next_page": next_page, "complete": complete}
+        self.update_job(bucket, **changes)
+        self.write(force=False)
+
+    def write(self, *, force: bool = True) -> bool:
+        """Persist dirty state; explicit writes bypass the interval, never dirty checks.
+
+        No full-state comparison/hash is needed. Keep dirty state on any failure,
+        and start the next interval only after a successful atomic replacement.
+        """
+        if not self.dirty:
+            return False
+        if not force and self._last_write is not None and time.monotonic() - self._last_write < self.interval_seconds:
+            return False
+        if self.before_write is not None:
+            self.before_write()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(self.path.name + ".tmp")
         payload = {"schema_version": self.VERSION, "buckets": self.state, "legacy_buckets": self.legacy}
@@ -605,8 +632,14 @@ class Checkpoint:
                 if attempt == 2:
                     raise
                 time.sleep(0.1 * (attempt + 1))
+        self.dirty = False
+        self._last_write = time.monotonic()
+        logging.info("Checkpoint saved: %s (%s bytes)", self.path, self.path.stat().st_size)
+        return True
 
     def add_searches(self, source: str, format_name: str, searches: Iterable[dict[str, Any]]) -> None:
+        if self.key(source, format_name) not in self.state:
+            self.mark_dirty()
         bucket = self.state.setdefault(self.key(source, format_name), {})
         jobs = bucket.setdefault("searches", {})
         queue = bucket.setdefault("queue", [])
@@ -621,9 +654,10 @@ class Checkpoint:
             if source == "moxfield" and key == "views:descending" and legacy:
                 job.update(next_page=legacy.get("next_page", 1), complete=legacy.get("complete", False))
             jobs[key] = job
+            self.mark_dirty()
             if not job["complete"]:
                 queue.append(key)
-        bucket["complete"] = not queue
+        self.update_job(bucket, complete=not queue)
 
     def current_search(self, source: str, format_name: str) -> dict[str, Any] | None:
         bucket = self.state[self.key(source, format_name)]
@@ -637,8 +671,7 @@ class Checkpoint:
         queued = set(queue)
         queue.extend(key for key, job in bucket["searches"].items()
                      if key in allowed and key not in queued and not job["complete"])
-        bucket["queue"] = queue
-        bucket["complete"] = not queue
+        self.update_job(bucket, queue=queue, complete=not queue)
 
     def remove_searches(self, source: str, format_name: str, keys: Iterable[str]) -> int:
         """Discard obsolete generated searches while retaining seed progress."""
@@ -647,6 +680,7 @@ class Checkpoint:
         removed = set(keys) & set(bucket["searches"])
         if not removed:
             return 0
+        self.mark_dirty()
         bucket["queue"] = [key for key in bucket["queue"] if key not in removed]
         for key in removed:
             del bucket["searches"][key]
@@ -660,6 +694,7 @@ class Checkpoint:
         bucket = self.state[self.key(source, format_name)]
         queue = bucket["queue"]
         assert queue[0] == job["key"]
+        self.mark_dirty()
         queue.pop(0)
         job["complete"] = complete
         if reason:
@@ -672,12 +707,13 @@ class Checkpoint:
         for bucket in self.state.values():
             for key, job in bucket.get("searches", {}).items():
                 if job.get("complete"):
+                    self.mark_dirty()
                     job.update(next_page=1, complete=False)
                     for field in ("last_fingerprint", "next_url", "stop_reason"):
                         job.pop(field, None)
                     bucket["queue"].append(key)
             if bucket.get("queue"):
-                bucket["complete"] = False
+                self.update_job(bucket, complete=False)
 
 
 def finish_page(
