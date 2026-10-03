@@ -3,6 +3,7 @@
 /checkpoints/
 
 # Generated model artifacts.
+/artifacts/
 *.pt
 *.pth
 *.safetensors
@@ -44,3 +45,8 @@ dist/
 
 # Local task notes, not application configuration.
 /instruction.txt
+
+# Local scraper operations (source scripts/docs remain tracked).
+/logs/
+/backups/
+*.lock
