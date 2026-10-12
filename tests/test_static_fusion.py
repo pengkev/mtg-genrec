@@ -36,8 +36,8 @@ def test_historical_and_checkpoint_output_guards(tmp_path):
 def test_review_renderer_preserves_compute_and_history(tmp_path):
     import nbformat
     from scripts.render_static_fusion_review import render
-    directory = tmp_path/'notebooks'
-    directory.mkdir()
+    directory = tmp_path/'notebooks/archive'
+    directory.mkdir(parents=True)
     path = directory/'card2vec_static_embeddings.ipynb'
     historical = nbformat.v4.new_code_cell('raise RuntimeError("historical cell executed")',
         outputs=[nbformat.v4.new_output('stream',name='stdout',text='frozen output\n')],execution_count=19)

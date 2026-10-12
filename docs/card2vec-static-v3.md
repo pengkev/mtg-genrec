@@ -1,6 +1,6 @@
 # Static v3: geometry, compression and compatibility
 
-The v3 section appended to `notebooks/card2vec_static_embeddings.ipynb` defaults to
+The v3 section in `notebooks/archive/card2vec_static_embeddings.ipynb` defaults to
 reading saved outputs. Existing v2 cells and outputs are preserved. Computational
 work lives in `src/mtgdeck/static_geometry.py`; the CLI never calls v1/v2 training,
 preparation, or report writers.

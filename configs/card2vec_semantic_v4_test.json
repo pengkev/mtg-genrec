@@ -1,0 +1,14 @@
+{
+  "version": "semantic_v4_reserved_candidates_v1",
+  "review_status": "pending_human_review",
+  "policy": "Reserve all endpoints and entire connected relation families from synthetic training. This candidate set is not a manually reviewed benchmark yet; quantitative manual-test metrics stay unavailable until a reviewer creates a fresh version with review_status manually_reviewed and records provenance.",
+  "records": [
+    {"anchor": "remand", "positives": ["reprieve"], "hard_negatives": ["counterspell", "memory lapse", "unsubstantiate", "into the roil", "delay"], "distinctions": ["spell target", "temporary answer", "cantrip"]},
+    {"anchor": "lightning strike", "positives": ["searing spear"], "hard_negatives": ["lightning bolt"], "distinctions": ["mana cost"]},
+    {"anchor": "wrath of god", "positives": ["day of judgment"], "hard_negatives": ["farewell"], "distinctions": ["regeneration restriction", "destroy versus exile"]},
+    {"anchor": "llanowar elves", "positives": ["elvish mystic", "fyndhorn elves"], "hard_negatives": ["birds of paradise"], "distinctions": ["mana colors", "flying"]},
+    {"anchor": "soulherder", "positives": ["teleportation circle"], "hard_negatives": ["ephemerate"], "distinctions": ["repeatable versus single-use blink", "source type"]},
+    {"anchor": "young pyromancer", "positives": ["third path iconoclast"], "hard_negatives": ["murmuring mystic"], "distinctions": ["trigger scope", "token type", "mana cost"]},
+    {"anchor": "entomb", "positives": ["unmarked grave"], "hard_negatives": ["reanimate"], "distinctions": ["search versus reanimation", "legendary restriction", "timing"]}
+  ]
+}

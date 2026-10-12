@@ -119,4 +119,5 @@ engine or a declaration that an unfinished deck is tournament-ready.
 
 Rules reference: [Wizards' Ikoria release notes](https://magic.wizards.com/en/news/feature/ikoria-lair-behemoths-and-commander-2020-edition-release-notes-2020-04-10).
 The Commander companion-only ban follows the [February 9, 2026 announcement](https://magic.wizards.com/en/news/announcements/commander-banned-and-restricted-february-9-2026).
-Historical manual comparisons remain in the appendix.
+Historical manual comparisons are preserved in
+[`notebooks/archive/genrec_commander_comparisons.ipynb`](../notebooks/archive/genrec_commander_comparisons.ipynb).

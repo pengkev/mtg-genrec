@@ -25,7 +25,7 @@ notebooks/genrec.ipynb    Training, evaluation and model comparisons
 demo/app.py              Gradio deck-completion demo
 demo/space/              Space metadata, inference requirements and asset pins
 tests/                   Offline tests
-docs/                    AWS migration handoff
+docs/                    Research results, training and deployment guides
 data/                    Local datasets, metadata and scraper state (ignored)
 checkpoints/             Local trained GenRec models (ignored)
 ```
@@ -106,20 +106,21 @@ python scripts/run_genrec.py --formats modern --epochs 8 --premium-epochs 4 --ru
 python scripts/run_genrec.py --max-records 500 --epochs 1 --premium-epochs 1 --run-name formats_smoke
 ```
 
-Use a fresh run name. Each format writes base/premium checkpoints, data audits, split membership, and `results.json` under `checkpoints/<run-name>/<format>/`. The notebook provides `recommend_format(...)` for all three formats. The Commander demo discovers only compatible Commander checkpoints. Static pretraining may overlap downstream evaluation decks; the historical 896d recommendation lists remain labeled in the notebook appendix. Each format's data is loaded in memory; interrupted runs are not automatically resumed.
+Use a fresh run name. Each format writes base/premium checkpoints, data audits, split membership, and `results.json` under `checkpoints/<run-name>/<format>/`. The notebook provides `recommend_format(...)` for all three formats. The Commander demo discovers only compatible Commander checkpoints. Static pretraining may overlap downstream evaluation decks; the historical 896d recommendation lists are preserved in [the comparison archive](notebooks/archive/genrec_commander_comparisons.ipynb). Each format's data is loaded in memory; interrupted runs are not automatically resumed.
 
 For constructed-corpus static embedding research, use
 [`notebooks/card2vec_static_embeddings.ipynb`](notebooks/card2vec_static_embeddings.ipynb).
-It compares 128 and 256 dimensions across independent training seeds, using bounded
-unordered pair sampling, joblib, frozen semantic probes and retrieval benchmarks.
-Configuration controls resource use and reversible size quarantine; unknown
-provenance remains eligible for training. Results go to `artifacts/card2vec/`.
-The notebook defaults to reading saved results. Targeted stages can be run without
-executing the notebook: `python scripts/run_static_experiment.py --stage train`
-or `--stage evaluate`. `scripts/render_static_review.py` executes only saved-result
-review cells, excluding all model-training and evaluation cells. Original results
-remain in `artifacts/card2vec/static_v1/`.
-See the [results and prevention notes](docs/card2vec-static-results.md).
+Its six cells check cached inputs, run the existing seven-stage pipeline, and
+review saved results. It reuses frozen SGNS/PPMI and the adapted ModernBERT model,
+trains Spellbook, then exports and evaluates the fixed representations.
+`RUN_V4_PIPELINE = True` runs the pipeline; set it to false for review only.
+See the [run details](docs/card2vec-v4-training-run.md).
+
+Earlier dimension, geometry, relation, fusion, and semantic experiments retain
+their cells and saved outputs in [the research archive](notebooks/archive/card2vec_static_embeddings.ipynb).
+Their targeted CLI stages and review renderers remain available; saved artifacts
+stay in their existing locations. See the [archive guide](notebooks/archive/README.md)
+and [results and prevention notes](docs/card2vec-static-results.md).
 
 ## 4. Demo
 
@@ -148,7 +149,14 @@ Trusted Publisher setup, manual redeployment and verification.
 python -m pytest -q
 ```
 
-Tests use fixtures and temporary directories; they do not scrape live sites or train on local corpora. See [the AWS migration handoff](docs/aws-migration-audit.md) for current resource findings and remaining work. No AWS infrastructure is included.
+Tests use fixtures and temporary directories; they do not scrape live sites or train on local corpora. No AWS infrastructure is included.
+
+Keep active notebooks focused on source: after reviewing a run, save any output
+you need under local `artifacts/`, then run `python scripts/clean_notebooks.py`
+before committing. `--check` reports generated output without changing files.
+Historical notebooks under `notebooks/archive/` retain their saved results and
+are excluded from cleanup. Review renderers share `scripts/notebook_review.py`
+and execute only explicitly tagged review cells.
 
 ### Curated premium decks
 

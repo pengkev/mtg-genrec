@@ -3,6 +3,11 @@ DIALOG_TEMPLATE = '<dialog aria-labelledby="card-dialog-title"><div class="card-
 DIALOG_JS = r"""
 let previousFocus = null;
 let parentViewport = null;
+const dialogState = window.__mtgCardDialogState ||= { dismissedValue: "" };
+function currentValue() {
+    return String(props.value || "");
+}
+let pendingOpen = Boolean(currentValue() && currentValue() !== dialogState.dismissedValue);
 const embedded = window.parent !== window && window.parentIFrame?.getPageInfo;
 function positionDialog(dialog) {
     if (!parentViewport) return;
@@ -22,7 +27,7 @@ if (embedded) {
         parentViewport = info;
         const dialog = element.querySelector('dialog');
         if (dialog) positionDialog(dialog);
-        if (props.value && !dialog?.open) syncDialog();
+        if (pendingOpen) syncDialog();
     });
 }
 const oracleCache = new Map();
@@ -62,8 +67,10 @@ function syncDialog() {
     const dialog = element.querySelector('dialog');
     if (!dialog) return;
     positionDialog(dialog);
-    if (props.value) {
+    if (currentValue()) {
+        if (!pendingOpen) return;
         if (embedded && !parentViewport) return;
+        pendingOpen = false;
         refreshOracle(dialog);
         if (!dialog.open) {
             previousFocus = document.activeElement;
@@ -72,9 +79,13 @@ function syncDialog() {
         }
     } else if (dialog.open) dialog.close();
 }
-function closeDialog() {
+function closeDialog(notify = true) {
+    const value = currentValue();
+    if (value) dialogState.dismissedValue = value;
+    pendingOpen = false;
     element.querySelector('dialog')?.close();
     previousFocus?.focus({ preventScroll: true });
+    if (notify) trigger('close_card');
 }
 element.addEventListener('click', (event) => {
     const dialog = element.querySelector('dialog');
@@ -86,14 +97,30 @@ element.addEventListener('click', (event) => {
     }
     const button = event.target.closest('[data-add]');
     if (button && !button.disabled) {
+        button.animate(
+            [{ transform: 'scale(1)' }, { transform: 'scale(0.96)' }, { transform: 'scale(1)' }],
+            { duration: 180, easing: 'ease-out' }
+        );
         const message = dialog.querySelector('.modal-message');
-        if (message) message.textContent = 'Adding…';
+        if (message) message.textContent = 'Adding...';
         trigger('add_copies', {quantity: 1});
     }
 });
 // Delegation survives HTML updates after selecting or adding a card.
-element.addEventListener('cancel', () => previousFocus?.focus({ preventScroll: true }), true);
-watch('value', syncDialog);
+element.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeDialog();
+}, true);
+watch('value', () => {
+    const value = currentValue();
+    if (!value) {
+        pendingOpen = false;
+        dialogState.dismissedValue = "";
+    } else {
+        pendingOpen = value !== dialogState.dismissedValue;
+    }
+    syncDialog();
+});
 syncDialog();
 """
 # Gradio's HTML component scopes its CSS, so include this in both stylesheets.
@@ -134,7 +161,7 @@ button:disabled { cursor: default; opacity: .5; }
 p { margin: 0 0 16px; line-height: 1.7; }
 .oracle-text { font-size: 1.05rem; }
 footer { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding-top: 8px; }
-.modal-message { margin: 0; font-size: .9rem; }
+.modal-message { margin: 0; font-size: .9rem; min-height: 1.7em; }
 @media (max-width: 600px) {
     dialog { padding: 20px; }
     .card-face { grid-template-columns: 1fr; gap: 20px; }

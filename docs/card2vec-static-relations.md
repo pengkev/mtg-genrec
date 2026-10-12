@@ -1,9 +1,9 @@
 # Relation-aware static Card2Vec evaluation
 
-The authoritative report remains `notebooks/card2vec_static_embeddings.ipynb`.
-Its 51 original cells and saved outputs are preserved exactly; an opening research
-map and a new relation-aware section distinguish historical results from pending
-experiments. The new helper is `src/mtgdeck/static_relations.py`, with the curated
+The historical report is preserved in
+[`notebooks/archive/card2vec_static_embeddings.ipynb`](../notebooks/archive/card2vec_static_embeddings.ipynb),
+including the original cells and saved outputs. The active notebook contains the
+current cached-data pipeline. The relation helper is `src/mtgdeck/static_relations.py`, with the curated
 configuration in `configs/card2vec_relations.json`.
 
 ## Audit and methodological changes

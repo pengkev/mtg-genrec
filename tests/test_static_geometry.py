@@ -10,6 +10,38 @@ from scipy import sparse
 from mtgdeck import static_geometry as g
 
 
+def test_archive_renderer_runs_only_review_and_keeps_source(tmp_path, monkeypatch):
+    import nbclient
+    import nbformat
+    from scripts.run_static_geometry import render_archive
+
+    source = tmp_path / 'notebooks/archive/card2vec_static_embeddings.ipynb'
+    source.parent.mkdir(parents=True)
+    notebook = nbformat.v4.new_notebook(cells=[
+        nbformat.v4.new_code_cell('raise AssertionError("compute ran")'),
+        nbformat.v4.new_code_cell('assert V3_OUTPUT_OVERRIDE.is_dir()',
+                                 metadata={'tags': ['static-v3-review']}),
+    ])
+    nbformat.write(notebook, source)
+    before = source.read_bytes()
+    output = tmp_path / 'results'
+    output.mkdir()
+    monkeypatch.setattr(g, 'validate', lambda root, target: (root, None, target))
+
+    def execute(client):
+        namespace = {}
+        for cell in client.nb.cells:
+            exec(cell.source, namespace)
+
+    monkeypatch.setattr(nbclient.NotebookClient, 'execute', execute)
+    archive = render_archive(tmp_path, output)
+    rendered = nbformat.read(archive, as_version=4)
+    assert len(rendered.cells) == 2
+    assert source.read_bytes() == before
+    with pytest.raises(FileExistsError, match='Executed archive exists'):
+        render_archive(tmp_path, output)
+
+
 def test_cross_scores_use_output_vectors_and_correct_direction():
     u = np.array([[1., 2.], [3., 4.], [2., -1.]], dtype=np.float32)
     v = np.array([[4., 1.], [1., -2.], [-2., 3.]], dtype=np.float32)

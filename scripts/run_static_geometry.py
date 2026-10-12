@@ -7,6 +7,29 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 
 
+def render_archive(root, output):
+    """Render archived review cells without changing the frozen geometry module."""
+    import nbformat
+    from nbclient import NotebookClient
+    from mtgdeck import static_geometry as v3
+
+    root, _, output = v3.validate(root, output)
+    archive = output / 'notebook_executed.ipynb'
+    if archive.exists():
+        raise FileExistsError('Executed archive exists; move it aside explicitly before rendering a newer review')
+    original = nbformat.read(root / 'notebooks/archive/card2vec_static_embeddings.ipynb', as_version=4)
+    review = nbformat.v4.new_notebook(cells=[c for c in original.cells
+                                          if 'static-v3-review' in c.metadata.get('tags', [])])
+    if not review.cells:
+        raise ValueError('No v3 review cells')
+    review.cells.insert(0, nbformat.v4.new_code_cell(
+        f'from pathlib import Path\nV3_OUTPUT_OVERRIDE = Path({str(output)!r})'))
+    NotebookClient(review, timeout=600, kernel_name='python3',
+                   resources={'metadata': {'path': str(root)}}).execute()
+    nbformat.write(review, archive)
+    return archive
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True, choices=[
@@ -37,7 +60,7 @@ def main():
         elif args.stage == 'report':
             v3.build_report(ROOT, args.output)
         else:
-            print(v3.render_notebook(ROOT, args.output))
+            print(render_archive(ROOT, args.output))
 
 
 if __name__ == '__main__':

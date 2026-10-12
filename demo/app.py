@@ -230,11 +230,17 @@ def create_demo():
             # Leave the dialog DOM, focus, and scroll position untouched on Add.
             return updated, message
 
+        def close_card():
+            return None, ""
+
         inputs = [checkpoint, commander, deck, count, sample, draws, seed, companion]
         outputs = [results, visible, status, download, recommendations, gallery, selected, modal]
         submit.click(visual_request, inputs, outputs, api_visibility="private", concurrency_limit=1, concurrency_id="inference")
         gallery.select(select_card, [recommendations, checkpoint, deck, companion], [selected, modal],
                        api_visibility="private", concurrency_limit=1, concurrency_id="inference")
+        modal.close_card(close_card, outputs=[selected, modal],
+                         show_progress="hidden", api_visibility="private",
+                         concurrency_limit=1, concurrency_id="inference")
         modal.add_copies(add_request, [selected, deck, checkpoint, companion, commander], [deck, status],
                          show_progress="hidden", api_visibility="private", concurrency_limit=1, concurrency_id="inference").then(
                              fn=None, inputs=[status], outputs=[], js=ADD_CONFIRMATION_JS,

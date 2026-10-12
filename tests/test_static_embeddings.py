@@ -193,16 +193,18 @@ def test_saved_run_reuse_validates_inputs_and_resolves_paths(tmp_path):
         load_saved_runs(tmp_path,cfg,metadata)
 
 
-def test_revised_notebook_parses_and_defaults_to_reuse():
+def test_notebooks_parse_and_preserve_training_defaults():
     import ast
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     notebook = json.loads((root/'notebooks/card2vec_static_embeddings.ipynb').read_text(encoding='utf-8'))
+    archive = json.loads((root/'notebooks/archive/card2vec_static_embeddings.ipynb').read_text(encoding='utf-8'))
     sources = []
-    for cell in notebook['cells']:
-        if cell['cell_type']=='code':
-            source = ''.join(cell['source'])
+    for document in (notebook, archive):
+        code = [''.join(cell['source']) for cell in document['cells'] if cell['cell_type']=='code']
+        for source in code:
             ast.parse(source)
-            sources.append(source)
-    assert 'RUN_SECOND_TRAINING = False' in '\n'.join(sources)
-    assert 'RUN_SECOND_EVALUATION = False' in '\n'.join(sources)
+        sources.append('\n'.join(code))
+    assert 'RUN_V4_PIPELINE = True' in sources[0]
+    assert 'RUN_SECOND_TRAINING = False' in sources[1]
+    assert 'RUN_SECOND_EVALUATION = False' in sources[1]
