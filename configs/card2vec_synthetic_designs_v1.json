@@ -1,0 +1,37 @@
+{
+  "version": "color_pie_consistent_designs_v1",
+  "source": "https://magic.wizards.com/en/news/making-magic/mechanical-color-pie-2021",
+  "policy": "Conservative whitelist of specific effects and their restrictions, not a complete or timeless color-pie classifier. Color access is preserved; power level and printability are not asserted. No off-color examples.",
+  "mana_values": [1, 2, 3, 4, 5, 6, 8],
+  "types": ["Instant", "Sorcery"],
+  "effects": [
+    {"id": "blue_draw", "colors": ["U"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "Draw {amount_words} {cards}.", "color_pie_rule": "Blue has unrestricted card draw."},
+    {"id": "black_draw_life", "colors": ["B"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "You draw {amount_words} {cards} and you lose {amount} life.", "color_pie_rule": "Black draws cards with an additional life cost."},
+    {"id": "green_draw_power", "colors": ["G"], "text": "Draw cards equal to the greatest power among creatures you control.", "color_pie_rule": "Green card draw remains tied to creatures."},
+    {"id": "red_burn", "colors": ["R"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "[SELF] deals {amount} damage to any target.", "color_pie_rule": "Red has unrestricted direct damage."},
+    {"id": "green_damage_flyer", "colors": ["G"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "[SELF] deals {amount} damage to target creature with flying.", "color_pie_rule": "Green direct damage remains restricted to creatures with flying."},
+    {"id": "green_bite", "colors": ["G"], "text": "Target creature you control deals damage equal to its power to target creature you don't control.", "color_pie_rule": "Green bite uses a creature's power and targets another creature."},
+    {"id": "green_fight", "colors": ["G"], "text": "Target creature you control fights target creature you don't control.", "color_pie_rule": "Green fight uses creatures on both sides."},
+    {"id": "black_reanimation", "colors": ["B"], "text": "Return target creature card from your graveyard to the battlefield.", "color_pie_rule": "Black has unrestricted creature reanimation."},
+    {"id": "white_small_reanimation", "colors": ["W"], "amounts": [1, 2, 3], "text": "Return target creature card with mana value {amount} or less from your graveyard to the battlefield.", "color_pie_rule": "White's creature reanimation here is restricted to small mana values."},
+    {"id": "blue_spell_recursion", "colors": ["U"], "text": "Return target instant or sorcery card from your graveyard to your hand.", "color_pie_rule": "Blue recovers instants and sorceries to hand, rather than directly reanimating creatures."},
+    {"id": "green_regrowth", "colors": ["G"], "text": "Return target card from your graveyard to your hand.", "color_pie_rule": "Green can recover any card to hand."},
+    {"id": "blue_bounce", "colors": ["U"], "text": "Return target nonland permanent to its owner's hand.", "color_pie_rule": "Blue returns permanents to hand."},
+    {"id": "blue_counter", "colors": ["U"], "text": "Counter target spell.", "color_pie_rule": "Blue has unrestricted counterspells."},
+    {"id": "black_destroy_creature", "colors": ["B"], "text": "Destroy target creature.", "color_pie_rule": "Black has creature destruction."},
+    {"id": "white_exile_tapped", "colors": ["W"], "text": "Exile target tapped creature.", "color_pie_rule": "White removal retains a tapped-creature restriction."},
+    {"id": "naturalize", "colors": ["W", "G"], "text": "Destroy target artifact or enchantment.", "color_pie_rule": "White and green can destroy artifacts and enchantments."},
+    {"id": "green_ramp", "colors": ["G"], "amounts": [1, 2, 3, 4, 5], "text": "Search your library for up to {amount_words} basic land {cards}, put {them} onto the battlefield tapped, then shuffle.", "color_pie_rule": "Green puts searched lands onto the battlefield."},
+    {"id": "red_ritual", "colors": ["R"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "Add {red_mana}.", "color_pie_rule": "Red can produce temporary red mana."},
+    {"id": "white_life", "colors": ["W"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "You gain {amount} life.", "color_pie_rule": "White has life gain."},
+    {"id": "green_pump", "colors": ["G"], "amounts": [1, 2, 3, 4, 5, 6, 8], "text": "Target creature gets +{amount}/+{amount} until end of turn.", "color_pie_rule": "Green can grant power and toughness together."}
+  ],
+  "compositions": [
+    ["blue_draw", "red_burn"],
+    ["blue_draw", "black_reanimation"],
+    ["blue_counter", "black_reanimation"],
+    ["green_damage_flyer", "green_regrowth"],
+    ["white_life", "white_small_reanimation"],
+    ["green_pump", "green_bite"]
+  ]
+}

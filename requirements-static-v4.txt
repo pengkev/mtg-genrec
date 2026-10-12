@@ -1,0 +1,8 @@
+# Separate research environment; historical dependency files stay immutable.
+-r requirements-static-fusion.txt
+torch>=2.6,<3
+transformers==5.3.0
+accelerate>=1.2,<2
+huggingface-hub>=1,<2
+safetensors>=0.5,<1
+# Exact installed versions and checkpoint/code hashes are persisted per stage.
