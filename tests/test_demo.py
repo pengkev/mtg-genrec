@@ -212,7 +212,7 @@ def test_gradio_app_serializes_recommend_and_add_and_preserves_api(bundle, monke
     namespace = runpy.run_path(str(Path(__file__).parents[1] / 'demo' / 'app.py'))
     app = namespace['demo']
     functions = {event.fn.__name__: event for event in app.fns.values() if event.fn}
-    for name in ('submit_request', 'visual_request', 'select_card', 'add_request'):
+    for name in ('submit_request', 'visual_request', 'select_card', 'close_card', 'add_request'):
         assert functions[name].concurrency_id == 'inference'
         assert functions[name].concurrency_limit == 1
     public = functions['submit_request']
@@ -234,6 +234,8 @@ def test_gradio_app_serializes_recommend_and_add_and_preserves_api(bundle, monke
         updated, status = functions['add_request'].fn(selected, 'Present', 'fixture.pt', None, ['Leader'], gr.EventData(None, {'quantity': 1}))
         duplicate, duplicate_status = functions['add_request'].fn(selected, updated, 'fixture.pt', None, ['Leader'], gr.EventData(None, {'quantity': 1}))
     assert functions['add_request'].outputs == [functions['visual_request'].inputs[2], functions['visual_request'].outputs[2]]
+    assert functions['close_card'].outputs == [functions['visual_request'].outputs[6], functions['visual_request'].outputs[7]]
+    assert functions['close_card'].fn() == (None, '')
     assert f"1 {selected['Card']}" in updated
     assert 'Added' in status
     assert duplicate == updated and 'already' in duplicate_status
